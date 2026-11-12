@@ -1466,7 +1466,10 @@ class _StickyWindow:
             todo = item["todo"]
             selected = todo["id"] == getattr(self, "_selected_todo_id", None)
             row.update(todo, compact=self.compact, font_size=self.font_size, selected=selected)
-            row.card.place(x=0, y=item["offset"], width=width, height=item["height"])
+            is_child = bool(todo.get("parent_id"))
+            x = 18 if is_child else 0
+            card_width = max(1, width - 18) if is_child else width
+            row.card.place(x=x, y=item["offset"], width=card_width, height=item["height"])
             self._row_widgets[todo["id"]] = row.card
             self._row_actions[todo["id"]] = row.actions
             self._check_vars.append(row.variable)
@@ -1482,7 +1485,7 @@ class _StickyWindow:
             )
             if item is not None:
                 self._subtask_widget.place(
-                    x=0, y=item["offset"], width=width, height=item["height"]
+                    x=18, y=item["offset"], width=max(1, width - 18), height=item["height"]
                 )
                 self._subtask_widget.lift()
                 if getattr(self, "_subtask_needs_focus", False):
@@ -2653,8 +2656,22 @@ class _DetailsPanel:
         self.close_button = header.winfo_children()[-1]
         tk.Frame(frame, bg=BORDER, height=1).pack(fill="x", padx=10)
 
-        container = tk.Frame(frame, bg=BG)
-        container.pack(fill="both", expand=True, padx=10, pady=8)
+        self.footer = tk.Frame(frame, bg=BG)
+        tk.Frame(self.footer, bg=BORDER, height=1).pack(side="top", fill="x", padx=10)
+        footer_buttons = tk.Frame(self.footer, bg=BG)
+        footer_buttons.pack(fill="x", padx=12, pady=(8, 10))
+        tk.Button(
+            footer_buttons, text="保存", command=self._save, relief="flat", bg=ACCENT,
+            fg="#FFFFFF", activebackground=ACCENT_DARK, activeforeground="#FFFFFF",
+            bd=0, padx=12, cursor="hand2", font=_font(window.font_size),
+        ).pack(side="right")
+        self._flat(footer_buttons, "删除", self._delete, fg=DANGER).pack(side="left")
+        self.toggle_button = self._flat(footer_buttons, "完成", self._toggle)
+        self.toggle_button.pack(side="left", padx=6)
+
+        self.container = tk.Frame(frame, bg=BG)
+        self.container.pack(fill="both", expand=True, padx=10, pady=8)
+        container = self.container
         self.canvas = tk.Canvas(container, bg=BG, highlightthickness=0, bd=0)
         self.scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
         self.body = tk.Frame(self.canvas, bg=BG)
@@ -2731,6 +2748,11 @@ class _DetailsPanel:
         self._remind_value = todo.get("remind_at")
         self._clear()
         self.panel_title.configure(text="详情")
+        self.toggle_button.configure(
+            text="取消完成" if bool(todo.get("done")) else "完成"
+        )
+        if self.footer.winfo_manager() != "pack":
+            self.footer.pack(side="bottom", fill="x", before=self.container)
         self._build_form(self._current() or todo)
 
     def _build_form(self, todo):
@@ -2754,11 +2776,13 @@ class _DetailsPanel:
             row, state="readonly", width=6, values=["无", "低", "中", "高"], font=_font(small)
         )
         self.priority.set(PRIORITY_LABELS.get(int(todo.get("priority") or 0), "无"))
+        self.priority.bind("<<ComboboxSelected>>", lambda event: self._save_priority_now())
         self.priority.pack(side="right")
         self.pinned = tk.BooleanVar(value=bool(todo.get("pinned")))
         tk.Checkbutton(
             self.body, text="置顶", variable=self.pinned, bg=BG, activebackground=BG,
             highlightthickness=0, bd=0, font=_font(small), cursor="hand2",
+            command=self._save_pinned_now,
         ).pack(anchor="w", pady=(4, 0))
 
         due_row = tk.Frame(self.body, bg=BG)
@@ -2817,19 +2841,6 @@ class _DetailsPanel:
                 fg=MUTED if child.get("done") else TEXT,
             ).pack(fill="x", anchor="w")
 
-        buttons = tk.Frame(self.body, bg=BG)
-        buttons.pack(fill="x", pady=(10, 4))
-        tk.Button(
-            buttons, text="保存", command=self._save, relief="flat", bg=ACCENT, fg="#FFFFFF",
-            activebackground=ACCENT_DARK, activeforeground="#FFFFFF", bd=0, padx=12,
-            cursor="hand2", font=_font(self.window.font_size),
-        ).pack(side="right")
-        self._flat(buttons, "删除", self._delete, small, fg=DANGER).pack(side="left")
-        self._flat(
-            buttons, "取消完成" if todo.get("done") else "完成",
-            self._toggle, small,
-        ).pack(side="left", padx=6)
-
         self._refresh_labels()
         self._bind_scroll_tree()
 
@@ -2879,6 +2890,23 @@ class _DetailsPanel:
         self._refresh_labels()
         self.window._render()
 
+    def _save_priority_now(self):
+        if self.todo is None:
+            return
+        label = self.priority.get()
+        priority = {value: key for key, value in PRIORITY_LABELS.items()}.get(label, 0)
+        self.window.controller.update_details(self.todo["id"], priority=priority)
+        self.todo["priority"] = priority
+        self.window._render()
+
+    def _save_pinned_now(self):
+        if self.todo is None:
+            return
+        pinned = bool(self.pinned.get())
+        self.window.controller.update_details(self.todo["id"], pinned=pinned)
+        self.todo["pinned"] = pinned
+        self.window._render()
+
     def _save(self):
         current = self._current() or self.todo
         title = self.title_var.get().strip()
@@ -2909,6 +2937,7 @@ class _DetailsPanel:
     def show_day(self, day, entries):
         self.mode = "day"
         self.todo = None
+        self.footer.pack_forget()
         self._clear()
         self.panel_title.configure(
             text="%d月%d日 周%s" % (day.month, day.day, store.WEEKDAYS[day.weekday()])
@@ -2951,15 +2980,17 @@ class _TaskRow:
         self.check.pack(side="left", padx=(6, 0))
 
         self.actions = tk.Frame(self.card, bg=CARD)
+        self.action_buttons = []
 
         def action(text, command, danger=False):
             button = tk.Button(
-                self.actions, text=text, width=2, relief="flat", bd=0, bg=CARD,
+                self.actions, text=text, width=3, relief="flat", bd=0, bg=CARD,
                 fg=DANGER if danger else MUTED, activebackground=CARD,
                 activeforeground=DANGER if danger else ACCENT, cursor="hand2",
-                font=_font(max(8, window.font_size - 1)), command=command,
+                font=_font(window.font_size), padx=2, command=command,
             )
             button.pack(side="right")
+            self.action_buttons.append(button)
             return button
 
         action("✕", self._delete, danger=True)
@@ -3041,6 +3072,8 @@ class _TaskRow:
         self.variable.set(bool(todo.get("done")))
         font_size = max(8, int(font_size) - (1 if compact else 0))
         small = max(8, font_size - 1)
+        for button in self.action_buttons:
+            button.configure(font=_font(font_size))
         done = bool(todo.get("done"))
         priority = int(todo.get("priority") or 0)
         prefix = "📌 " if todo.get("pinned") else ""

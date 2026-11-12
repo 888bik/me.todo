@@ -844,6 +844,81 @@ class V3WindowTests(unittest.TestCase):
         changed = [row for row in window._row_pool if row.todo and row.todo["id"] == "x3"][0]
         self.assertTrue(changed.variable.get())
 
+    def test_child_rows_are_indented_eighteen_pixels(self):
+        self.controller.todos = [
+            {"id": "p", "text": "父", "done": False, "remind_at": None, "reminded": False},
+            {"id": "c", "text": "子", "done": False, "remind_at": None, "reminded": False,
+             "parent_id": "p"},
+        ]
+        window = self.make_window()
+        window._dispatch(("show", True))
+        window.root.update()
+        canvas_width = window.canvas.winfo_width()
+
+        parent = window._row_widgets["p"]
+        child = window._row_widgets["c"]
+        self.assertEqual(int(parent.place_info()["x"]), 0)
+        self.assertEqual(int(parent.place_info()["width"]), canvas_width)
+        self.assertEqual(int(child.place_info()["x"]), 18)
+        self.assertEqual(int(child.place_info()["width"]), canvas_width - 18)
+
+    def test_reused_row_takes_the_indent_of_its_current_task(self):
+        self.controller.todos = [
+            {"id": "n%d" % index, "text": "任务%d" % index, "done": False,
+             "remind_at": None, "reminded": False}
+            for index in range(58)
+        ] + [
+            {"id": "p", "text": "父", "done": False, "remind_at": None, "reminded": False},
+            {"id": "c", "text": "子", "done": False, "remind_at": None, "reminded": False,
+             "parent_id": "p"},
+        ]
+        window = self.make_window()
+        window._dispatch(("show", True))
+        window.root.update()
+        window.canvas.yview_moveto(1)
+        window.root.update()
+
+        child = window._row_widgets["c"]
+        self.assertEqual(int(child.place_info()["x"]), 18)
+
+        window.canvas.yview_moveto(0)
+        window.root.update()
+        first = window._row_pool[0]
+        self.assertEqual(int(first.card.place_info()["x"]), 0)
+
+    def test_subtask_entry_is_indented_with_the_child_rows(self):
+        self.controller.todos = [
+            {"id": "p", "text": "父", "done": False, "remind_at": None, "reminded": False},
+        ]
+        window = self.make_window()
+        window._dispatch(("show", True))
+        window.root.update()
+
+        window._start_subtask("p")
+        window.root.update()
+
+        self.assertEqual(int(window._subtask_widget.place_info()["x"]), 18)
+
+    def test_row_action_icons_use_title_font_and_extra_padding(self):
+        window = self.make_window()
+        row = sticky_window._TaskRow(window, window.body)
+        row.update(self.controller.todos[0], compact=False, font_size=window.font_size)
+
+        title_size = int(str(row.title.cget("font")).split()[-1])
+        buttons = row.actions.winfo_children()
+        self.assertEqual(len(buttons), 4)
+        for button in buttons:
+            self.assertEqual(int(str(button.cget("font")).split()[-1]), title_size)
+            self.assertEqual(int(button.cget("width")), 3)
+            self.assertEqual(int(button.cget("padx")), 2)
+
+        row.actions.pack(side="right", fill="y")
+        row.card.update_idletasks()
+        self.assertLessEqual(
+            max(button.winfo_reqheight() for button in buttons),
+            window._measure_row_height(),
+        )
+
     def test_lock_button_toggles_and_saves(self):
         window = self.make_window()
         with mock.patch("sticky_window._set_click_through"), \
@@ -951,6 +1026,64 @@ class V3WindowTests(unittest.TestCase):
 
         self.assertEqual(self.controller.added, ["子任务"])
         self.assertEqual(self.controller.added_parents, ["a"])
+
+    def test_priority_selection_saves_immediately(self):
+        window = self.make_window()
+        window._open_details(self.controller.todos[0])
+        panel = window._details_panel
+        panel.title_var.set("正在输入")
+        panel.note.insert("1.0", "未保存的备注")
+
+        panel.priority.set("高")
+        panel._save_priority_now()
+
+        self.assertEqual(self.controller.details[-1], ("a", 3, None, None, None))
+        self.assertEqual(panel.title_var.get(), "正在输入")
+        self.assertEqual(panel.note.get("1.0", "end").strip(), "未保存的备注")
+
+    def test_priority_none_saves_zero_immediately(self):
+        window = self.make_window()
+        window._open_details(self.controller.todos[0])
+        panel = window._details_panel
+
+        panel.priority.set("无")
+        panel._save_priority_now()
+
+        self.assertEqual(self.controller.details[-1], ("a", 0, None, None, None))
+
+    def test_pinned_toggle_saves_immediately(self):
+        window = self.make_window()
+        window._open_details(self.controller.todos[0])
+        panel = window._details_panel
+
+        panel.pinned.set(True)
+        panel._save_pinned_now()
+
+        self.assertEqual(self.controller.details[-1], ("a", None, True, None, None))
+
+    def test_detail_footer_is_fixed_and_only_in_detail_mode(self):
+        window = self.make_window()
+        window._open_details(self.controller.todos[0])
+        panel = window._details_panel
+
+        self.assertIs(panel.footer.master, panel.frame)
+        self.assertEqual(panel.footer.winfo_manager(), "pack")
+
+        window._open_day(date(2026, 1, 5), [])
+        self.assertEqual(panel.footer.winfo_manager(), "")
+
+        window._open_details(self.controller.todos[0])
+        self.assertEqual(panel.footer.winfo_manager(), "pack")
+
+    def test_detail_footer_toggle_text_follows_done_state(self):
+        self.controller.todos.append(
+            {"id": "done", "text": "完成项", "done": True, "remind_at": None,
+             "reminded": False, "completed_at": datetime.now().astimezone().isoformat()},
+        )
+        window = self.make_window()
+        window._open_details(self.controller.todos[1])
+
+        self.assertEqual(window._details_panel.toggle_button.cget("text"), "取消完成")
 
     def test_details_sidebar_is_reused_for_different_todos(self):
         self.controller.todos.append(

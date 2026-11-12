@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.4.5
+- Restore the 18px child-row indent that the 3.4.0 virtual-list rewrite dropped: child task cards are placed at x=18 with width reduced by 18, while top-level rows stay at x=0. The reused row pool recomputes the indent from the current task on every placement.
+- The inline new-subtask entry uses the same 18px indent so it lines up with the child rows it creates.
+
+## 3.4.4
+- Row action icons (`＋ ⏰ ··· ✕`) now use the same font size as the task title (previously title − 1) and have `width=3` plus `padx=2`, so they are visibly larger and easier to click without changing row height.
+
+## 3.4.3
+- Detail sidebar priority selection now saves immediately via `<<ComboboxSelected>>` (无=0, 低=1, 中=2, 高=3); only `priority` is sent, so unsaved title/tags/note are not overwritten.
+- Pinned checkbox saves immediately the same way.
+- Save/delete/complete buttons moved out of the scrolling body into a fixed footer below the canvas; the footer appears only in detail mode and its complete/cancel-complete label follows the task state.
+
 ## 3.4.2
 - Detail sidebar scrolling is smooth again: wheel events are bound to every field/label/button (not just the canvas), and the canvas scrolls in 1px units with proportional high-resolution deltas.
 
@@ -83,6 +95,4 @@
 - Highlight the active view switch.
 
 ## 3.0.1
-- Move the low-level mouse hook to a dedicated thread with its own message loop; the callback never touches Tk and only reads the cached window rectangle.
-- Declare the Win32 entry points with 64-bit types (`HHOOK` included) and keep the ctypes callback alive, so unlocking cannot crash on a stale function pointer.
-- Remove the redundant hook pump thread that was not attached to the thread that installed the hook.
+- Mo
