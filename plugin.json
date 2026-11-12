@@ -1,0 +1,104 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LingCore/WinShun-plugins/main/schema/plugin.schema.json",
+  "manifest": 1,
+  "id": "me.todo",
+  "name": {
+    "zh": "待办",
+    "en": "Todo"
+  },
+  "version": "3.4.2",
+  "description": {
+    "zh": "桌面待办便签：db 直接查看待办列表，支持搜索/添加/完成待办、标签与子任务、重复提醒、截止日期、今日/周/月视图、导入导出、完成统计、窗口尺寸记忆、单实例详情弹窗、月视图任务定位和锁定置顶",
+    "en": "Desktop todo sticky note: show todo list with db, search/add/complete tasks, tags and subtasks, repeating reminders, due dates, today/week/month views, import/export, completion stats, remembered window size, reusable details dialog, calendar task navigation, lock-only always-on-top, light/dark theme"
+  },
+  "author": "888bik",
+  "homepage": "https://github.com/888bik/me.todo",
+  "license": "MIT",
+  "icon": "icon.png",
+  "trayMenu": "待办",
+  "runtime": {
+    "mode": "resident",
+    "program": "python",
+    "script": "main.py",
+    "start": "eager",
+    "idleExitSec": 0,
+    "timeoutMs": 10000,
+    "debounceMs": 300
+  },
+  "permissions": [
+    "ui",
+    "notifications"
+  ],
+  "commands": [
+    {
+      "id": "db",
+      "title": {
+        "zh": "待办",
+        "en": "Todo"
+      },
+      "description": {
+        "zh": "显示待办列表；可搜索、完成待办或打开完整便签",
+        "en": "Show todos; search, complete, or open the full sticky note"
+      },
+      "keyword": "db",
+      "hint": {
+        "zh": "直接查看待办；输入关键词搜索，输入新内容可添加",
+        "en": "View todos, search by keyword, or type a new todo"
+      }
+    },
+    {
+      "id": "todo",
+      "title": {
+        "zh": "待办",
+        "en": "Todo"
+      },
+      "description": {
+        "zh": "同 db：显示待办列表；可搜索、完成待办或打开完整便签",
+        "en": "Same as db: show todos; search, complete, or open the full sticky note"
+      },
+      "keyword": "todo",
+      "hint": {
+        "zh": "直接查看待办；输入关键词搜索，输入新内容可添加",
+        "en": "View todos, search by keyword, or type a new todo"
+      }
+    }
+  ],
+  "settings": [
+    {
+      "key": "show_sticky",
+      "type": "bool",
+      "title": {
+        "zh": "启动时显示桌面便签",
+        "en": "Show the sticky note at startup"
+      },
+      "default": true
+    },
+    {
+      "key": "transparency",
+      "type": "number",
+      "title": {
+        "zh": "便签不透明度（50–100）",
+        "en": "Sticky note opacity (50-100)"
+      },
+      "default": 95
+    },
+    {
+      "key": "hotkey",
+      "type": "hotkey",
+      "title": {
+        "zh": "新建待办全局热键",
+        "en": "New todo global hotkey"
+      },
+      "default": "Ctrl+Alt+T"
+    },
+    {
+      "key": "reminder_sound",
+      "type": "bool",
+      "title": {
+        "zh": "提醒时播放提示音",
+        "en": "Play a sound on reminders"
+      },
+      "default": true
+    }
+  ]
+}
