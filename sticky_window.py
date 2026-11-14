@@ -17,6 +17,7 @@ import store
 tk = None
 ttk = None
 messagebox = None
+tkfont = None
 
 VIEW_SIZES = {"list": (720, 520), "today": (720, 520), "week": (720, 520), "month": (720, 520)}
 VIEW_MIN_SIZES = {"list": (600, 420), "today": (600, 420), "week": (600, 420), "month": (600, 420)}
@@ -179,16 +180,18 @@ _lock = threading.Lock()
 
 
 def _load_tk():
-    global tk, ttk, messagebox
+    global tk, ttk, messagebox, tkfont
     if tk is not None:
         return
     import tkinter as _tk
+    from tkinter import font as _tkfont
     from tkinter import messagebox as _messagebox
     from tkinter import ttk as _ttk
 
     tk = _tk
     ttk = _ttk
     messagebox = _messagebox
+    tkfont = _tkfont
 
 
 def dpi_scale(root):
@@ -480,8 +483,8 @@ def _ensure(controller, settings):
 def _run(commands, controller, settings):
     _load_tk()
     root = tk.Tk()
-    _apply_dpi_scaling(root)
-    window = _StickyWindow(root, commands, controller, settings)
+    dpi_factor = _apply_dpi_scaling(root)
+    window = _StickyWindow(root, commands, controller, settings, dpi_factor=dpi_factor)
     _state["window"] = window
     _state["visible"] = False
     root.after(100, window.pump)
@@ -489,8 +492,17 @@ def _run(commands, controller, settings):
 
 
 class _StickyWindow:
-    def __init__(self, root, commands, controller, settings):
+    def __init__(self, root, commands, controller, settings, dpi_factor=None):
         self.root = root
+        try:
+            # The production entry point passes _apply_dpi_scaling()'s value.
+            # Direct construction (used by tests and embedders) stays at the
+            # unscaled baseline unless a factor is explicitly supplied.
+            self._dpi_factor = max(1.0, min(2.5, float(
+                1.0 if dpi_factor is None else dpi_factor
+            )))
+        except (TypeError, ValueError):
+            self._dpi_factor = 1.0
         self.commands = commands
         self.controller = controller
         self.settings = dict(settings)
@@ -576,6 +588,7 @@ class _StickyWindow:
         self.main = tk.Frame(self.root, bg=BG)
         self.main.pack(side="left", fill="both", expand=True)
         self._build_nav()
+        self._resize_nav()
 
         header = tk.Frame(self.main, bg=BG)
         header.pack(side="top", fill="x", padx=14, pady=(12, 8))
@@ -773,24 +786,43 @@ class _StickyWindow:
                 widget.bind("<Button-1>", lambda event, k=key: self._set_view(k))
             self._nav_view_frames[key] = {"frame": item, "bar": bar, "name": name}
 
+    def _scale_dimension(self, logical_pixels):
+        return round(int(logical_pixels) * self._dpi_factor)
+
+    def _logical_dimension(self, key, default):
+        value = self.config.get(key)
+        try:
+            return int(value) if value else int(default)
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _physical_screen_limit(self, value, axis):
+        try:
+            screen = int(
+                self.root.winfo_screenwidth() if axis == "width"
+                else self.root.winfo_screenheight()
+            )
+        except Exception:
+            return int(value)
+        return min(int(value), max(1, screen))
+
     def _apply_size(self):
-        width = self.config.get("window_width") or DEFAULT_WIDTH
-        height = self.config.get("window_height") or DEFAULT_HEIGHT
-        try:
-            width = int(width)
-        except (TypeError, ValueError):
-            width = DEFAULT_WIDTH
-        try:
-            height = int(height)
-        except (TypeError, ValueError):
-            height = DEFAULT_HEIGHT
-        width = max(MIN_WIDTH, width)
-        height = max(MIN_HEIGHT, height)
-        if width != self.config.get("window_width"):
-            self.config["window_width"] = width
-        if height != self.config.get("window_height"):
-            self.config["window_height"] = height
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
+        # config.json stores logical pixels. Tk geometry and minsize use the
+        # physical pixels of the current DPI-aware display.
+        logical_width = max(
+            MIN_WIDTH, self._logical_dimension("window_width", DEFAULT_WIDTH)
+        )
+        logical_height = max(
+            MIN_HEIGHT, self._logical_dimension("window_height", DEFAULT_HEIGHT)
+        )
+        self.config["window_width"] = logical_width
+        self.config["window_height"] = logical_height
+
+        width = self._physical_screen_limit(self._scale_dimension(logical_width), "width")
+        height = self._physical_screen_limit(self._scale_dimension(logical_height), "height")
+        minimum_width = self._scale_dimension(MIN_WIDTH)
+        minimum_height = self._scale_dimension(MIN_HEIGHT)
+        self.root.minsize(minimum_width, minimum_height)
         x, y = self.config.get("window_x"), self.config.get("window_y")
         if isinstance(x, int) and isinstance(y, int):
             self.root.geometry("%dx%d+%d+%d" % (width, height, x, y))
@@ -838,6 +870,65 @@ class _StickyWindow:
         self._update_nav()
         self._render()
 
+    def _measure_nav_width(self):
+        """Measure the widest navigation row with Tk's actual font metrics."""
+        fallback = round(NAV_WIDTH * self._dpi_factor)
+        if tkfont is None:
+            return fallback
+        try:
+            small = max(8, self.font_size - 1)
+            count_size = max(8, small - 1)
+            font_key = (small, count_size, FONT_FAMILY)
+            if getattr(self, "_nav_measure_font_key", None) != font_key:
+                self._nav_measure_fonts = {
+                    "label": tkfont.Font(
+                        root=self.root, family=FONT_FAMILY, size=small
+                    ),
+                    "label_bold": tkfont.Font(
+                        root=self.root, family=FONT_FAMILY, size=small, weight="bold"
+                    ),
+                    "count_bold": tkfont.Font(
+                        root=self.root, family=FONT_FAMILY, size=count_size, weight="bold"
+                    ),
+                    "sub": tkfont.Font(
+                        root=self.root, family=FONT_FAMILY, size=count_size
+                    ),
+                }
+                self._nav_measure_font_key = font_key
+            fonts = self._nav_measure_fonts
+            label_font = fonts["label"]
+            label_bold_font = fonts["label_bold"]
+            count_bold_font = fonts["count_bold"]
+            sub_font = fonts["sub"]
+
+            # Each filter item: outer padx 10+8, 3px active bar, 7px
+            # padding on each side of the name, and count padx (0, 6).
+            filter_widths = [
+                10 + 8 + 3 + max(label_font.measure(label), label_bold_font.measure(label))
+                + 7 + 7 + count_bold_font.measure("99") + 6
+                for _key, label in NAV_FILTERS
+            ]
+            # The small hint is packed with padx=(24, 8).
+            sub_width = 24 + 8 + sub_font.measure("逾期 99 · 今日到期 99")
+            # View rows have the same item / bar / name padding, but no count.
+            view_widths = [
+                10 + 8 + 3 + max(label_font.measure(label), label_bold_font.measure(label))
+                + 7 + 7
+                for _key, label in NAV_VIEWS
+            ]
+            return max(fallback, max(filter_widths + view_widths + [sub_width]) + 4)
+        except Exception:
+            return fallback
+
+    def _resize_nav(self):
+        """Keep the fixed-width sidebar wide enough for its real content."""
+        nav = getattr(self, "nav", None)
+        if nav is None:
+            return
+        width = self._measure_nav_width()
+        nav.configure(width=width)
+        self._nav_width = width
+
     def _update_nav(self):
         active_filter = self.filter if self.view in ("list", "today") else None
         small = max(8, self.font_size - 1)
@@ -881,6 +972,7 @@ class _StickyWindow:
                 text="逾期 %d · 今日到期 %d" % (overdue, due_today),
                 fg=DANGER if overdue else MUTED,
             )
+        self._resize_nav()
 
     def _update_nav_counts(self, todos):
         for key in ("today", "overdue", "all", "week7", "nodate", "done"):
@@ -891,6 +983,7 @@ class _StickyWindow:
                     text=str(total),
                     fg=DANGER if key == "overdue" and total else MUTED,
                 )
+        self._resize_nav()
 
     def _update_view_buttons(self):
         self._update_nav()
@@ -944,6 +1037,7 @@ class _StickyWindow:
             self.style.configure("Card.TCheckbutton", background=CARD, font=_font(self.font_size))
         except Exception:
             pass
+        self._resize_nav()
 
     def set_font_size(self, size):
         size = max(store.FONT_MIN, min(store.FONT_MAX, int(size)))
@@ -1654,7 +1748,7 @@ class _StickyWindow:
         if self._detail_frame is not None:
             return
         self._detail_frame = tk.Frame(
-            self.root, bg=BG, width=DETAIL_WIDTH,
+            self.root, bg=BG, width=self._scale_dimension(DETAIL_WIDTH),
             highlightbackground=BORDER, highlightthickness=1,
         )
         self._detail_frame.pack_propagate(False)
@@ -1665,18 +1759,21 @@ class _StickyWindow:
             return
         width = self.root.winfo_width()
         if width <= 1:
-            width = self.config.get("window_width") or DEFAULT_WIDTH
-        try:
-            width = int(width)
-        except (TypeError, ValueError):
-            width = DEFAULT_WIDTH
-        self._detail_base_width = max(MIN_WIDTH, width)
+            width = self._scale_dimension(
+                self._logical_dimension("window_width", DEFAULT_WIDTH)
+            )
+        self._detail_base_width = max(self._scale_dimension(MIN_WIDTH), int(width))
         self._detail_visible = True
         self._detail_frame.pack(side="right", fill="y", before=self.main)
-        target = min(self._detail_base_width + DETAIL_WIDTH, self.root.winfo_screenwidth())
+        target = self._physical_screen_limit(
+            self._detail_base_width + self._scale_dimension(DETAIL_WIDTH), "width"
+        )
         height = self.root.winfo_height()
         if height <= 1:
-            height = self.config.get("window_height") or DEFAULT_HEIGHT
+            height = self._scale_dimension(
+                self._logical_dimension("window_height", DEFAULT_HEIGHT)
+            )
+        height = self._physical_screen_limit(height, "height")
         x, y = self.root.winfo_x(), self.root.winfo_y()
         self.root.geometry("%dx%d+%d+%d" % (target, int(height), x, y))
 
@@ -1687,12 +1784,21 @@ class _StickyWindow:
         self._detail_visible = False
         self._selected_todo_id = None
         self._details_dialog = None
-        width = self._detail_base_width or self.config.get("window_width") or DEFAULT_WIDTH
+        width = self._detail_base_width
+        if not width:
+            width = self._scale_dimension(
+                self._logical_dimension("window_width", DEFAULT_WIDTH)
+            )
+        width = max(self._scale_dimension(MIN_WIDTH), int(width))
+        width = self._physical_screen_limit(width, "width")
         height = self.root.winfo_height()
         if height <= 1:
-            height = self.config.get("window_height") or DEFAULT_HEIGHT
+            height = self._scale_dimension(
+                self._logical_dimension("window_height", DEFAULT_HEIGHT)
+            )
+        height = self._physical_screen_limit(height, "height")
         x, y = self.root.winfo_x(), self.root.winfo_y()
-        self.root.geometry("%dx%d+%d+%d" % (max(MIN_WIDTH, int(width)), int(height), x, y))
+        self.root.geometry("%dx%d+%d+%d" % (width, int(height), x, y))
         self._render()
 
     def _select_todo(self, todo):
@@ -2314,11 +2420,13 @@ class _StickyWindow:
                 width = self._detail_base_width
             if width < 240 or height < 260:
                 return
+            logical_width = round(width / self._dpi_factor)
+            logical_height = round(height / self._dpi_factor)
             self.controller.save_window_position(
-                self.root.winfo_x(), self.root.winfo_y(), width, height
+                self.root.winfo_x(), self.root.winfo_y(), logical_width, logical_height
             )
-            self.config["window_width"] = width
-            self.config["window_height"] = height
+            self.config["window_width"] = logical_width
+            self.config["window_height"] = logical_height
         except Exception:
             pass
 

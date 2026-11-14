@@ -68,6 +68,120 @@ class DpiScalingTests(unittest.TestCase):
         root.tk.call.assert_called_once_with("tk", "scaling", 2.5)
 
 
+class DpiAwareLayoutTests(unittest.TestCase):
+    def make_window(self, factor, config=None):
+        root = _tk_root()
+        self.addCleanup(root.destroy)
+        controller = _Controller([])
+        if config is not None:
+            controller.get_config = lambda: dict(config)
+        with mock.patch("sticky_window.dpi_scale", return_value=factor):
+            measured_factor = sticky_window.dpi_scale(root)
+            window = sticky_window._StickyWindow(
+                root, queue.Queue(), controller, {"transparency": 100},
+                dpi_factor=measured_factor,
+            )
+        return root, window, controller
+
+    def test_sidebar_measures_worst_case_text_at_150_percent(self):
+        root, window, _controller = self.make_window(1.5)
+        root.update_idletasks()
+
+        worst_case = "逾期 99 · 今日到期 99"
+        window._nav_today_sub.configure(text=worst_case)
+        root.update_idletasks()
+        sub_font = sticky_window.tkfont.Font(
+            root=root, family=sticky_window.FONT_FAMILY,
+            size=max(8, window.font_size - 1),
+        )
+        required_sub_width = sub_font.measure(worst_case) + 24 + 8
+        actual_width = int(window.nav.cget("width"))
+
+        self.assertAlmostEqual(window._dpi_factor, 1.5)
+        self.assertGreaterEqual(actual_width, round(sticky_window.NAV_WIDTH * 1.5))
+        self.assertGreaterEqual(actual_width, required_sub_width)
+        self.assertGreaterEqual(actual_width, window._measure_nav_width())
+
+    def test_sidebar_keeps_original_160_pixel_floor_at_100_percent(self):
+        _root, window, _controller = self.make_window(1.0)
+        self.assertEqual(int(window.nav.cget("width")), 160)
+
+    def test_minimum_and_default_window_dimensions_scale_with_dpi(self):
+        root, window, _controller = self.make_window(1.5)
+        window._dispatch(("show", True))
+        root.update_idletasks()
+
+        self.assertTrue(root.wm_geometry().startswith("1080x780"))
+        self.assertEqual(tuple(root.minsize()), (900, 630))
+        self.assertEqual(window.config["window_width"], 720)
+        self.assertEqual(window.config["window_height"], 520)
+
+    def test_saved_logical_geometry_round_trips_at_150_percent(self):
+        root, window, controller = self.make_window(1.5)
+        root.geometry("1080x780+40+60")
+        root.update_idletasks()
+
+        window._save_geometry()
+
+        self.assertIsNotNone(controller.saved_position)
+        self.assertEqual(controller.saved_position[2:], (720, 520))
+        self.assertEqual(window.config["window_width"], 720)
+        self.assertEqual(window.config["window_height"], 520)
+
+    def test_detail_panel_width_scales_with_dpi(self):
+        _root, window, _controller = self.make_window(1.5)
+        window._ensure_detail_panel()
+
+        self.assertEqual(int(window._detail_frame.cget("width")), 450)
+
+    def test_detail_panel_uses_scaled_config_fallback_and_restores_logical_size(self):
+        root, window, _controller = self.make_window(
+            1.5, {"window_width": 720, "window_height": 520}
+        )
+        window._ensure_detail_panel()
+        window._show_detail_panel()
+        root.update_idletasks()
+
+        self.assertEqual(window._detail_base_width, 1080)
+        self.assertTrue(root.wm_geometry().startswith("1280x780"))
+
+        window._hide_detail_panel()
+        root.update_idletasks()
+        self.assertTrue(root.wm_geometry().startswith("1080x780"))
+
+    def test_saved_dimensions_below_minimum_use_scaled_logical_minimum(self):
+        root, window, _controller = self.make_window(
+            1.5, {"window_width": 400, "window_height": 500}
+        )
+        window._apply_size()
+        root.update_idletasks()
+
+        self.assertTrue(root.wm_geometry().startswith("900x750"))
+        self.assertEqual(tuple(root.minsize()), (900, 630))
+        self.assertEqual(window.config["window_width"], 600)
+        self.assertEqual(window.config["window_height"], 500)
+
+    def test_physical_window_dimensions_are_clamped_to_screen(self):
+        root, window, _controller = self.make_window(
+            1.5, {"window_width": 2000, "window_height": 1000}
+        )
+        with mock.patch.object(root, "winfo_screenwidth", return_value=1000), \
+                mock.patch.object(root, "winfo_screenheight", return_value=700):
+            window._apply_size()
+        root.update_idletasks()
+
+        self.assertTrue(root.wm_geometry().startswith("1000x700"))
+
+    def test_saved_logical_size_is_scaled_when_applied(self):
+        root, window, _controller = self.make_window(
+            1.5, {"window_width": 720, "window_height": 520}
+        )
+        window._apply_size()
+        root.update_idletasks()
+
+        self.assertTrue(root.wm_geometry().startswith("1080x780"))
+
+
 class HookWatchdogTests(unittest.TestCase):
     def make_window(self):
         window = object.__new__(sticky_window._StickyWindow)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.4.10
+- Measure the left navigation width with Tk font metrics for the widest filter/view labels, two-digit counts, and the `逾期 99 · 今日到期 99` hint; recompute after construction, font changes, and navigation/count updates while retaining the DPI-scaled 160px minimum.
+- Scale the window minimum/default dimensions and the details sidebar width by the startup DPI factor. Clamp physical window geometry to the available screen size.
+- Store `window_width` / `window_height` as logical pixels and convert to physical pixels when applying geometry; convert back when saving. Window position remains in physical pixels.
+- Add DPI layout, detail-panel fallback/restore, minimum-size, screen-clamp, and logical-geometry round-trip regression tests.
+
 ## 3.4.9
 - Declare Windows process DPI awareness before WinShun initialization can create the sticky-note Tk root: prefer `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` and fall back to `SetProcessDPIAware`; non-Windows and unsupported Windows versions remain non-fatal. Existing Tk DPI scaling is unchanged.
 - Add a two-second monotonic watchdog while the visible note is locked. If the low-level mouse hook dies, reinstall it; if reinstall fails, explicitly restore mouse input and show the `Ctrl+Alt+U` emergency-unlock hint.

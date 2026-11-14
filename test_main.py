@@ -928,7 +928,7 @@ class ManifestTests(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(self.manifest["id"], "me.todo")
         self.assertEqual(self.manifest["id"], os.path.basename(HERE))
-        self.assertEqual(self.manifest["version"], "3.4.9")
+        self.assertEqual(self.manifest["version"], "3.4.10")
         self.assertEqual(self.manifest["author"], "888bik")
         self.assertEqual(self.manifest["license"], "MIT")
         self.assertEqual(self.manifest["icon"], "icon.png")
