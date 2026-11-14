@@ -5,6 +5,7 @@ one single-shot reminder per todo, one global hotkey, three host settings.
 Everything lives in WS_DATA_DIR; no network, no clipboard, no user files.
 """
 
+import ctypes
 import hashlib
 import os
 import sys
@@ -20,6 +21,46 @@ import winshun
 DEFAULT_HOTKEY = "Ctrl+Alt+T"
 UNLOCK_HOTKEY = "Ctrl+Alt+U"
 REMINDER_INTERVAL = 30
+_dpi_awareness_attempted = False
+_dpi_awareness_result = False
+
+
+def _set_process_dpi_awareness():
+    """Declare per-monitor-v2 awareness before the plugin can create Tk."""
+    global _dpi_awareness_attempted, _dpi_awareness_result
+    if os.name != "nt":
+        return False
+    if _dpi_awareness_attempted:
+        return _dpi_awareness_result
+    _dpi_awareness_attempted = True
+
+    try:
+        user32 = ctypes.windll.user32
+    except Exception:
+        _dpi_awareness_result = False
+        return False
+
+    try:
+        set_context = user32.SetProcessDpiAwarenessContext
+        set_context.argtypes = [ctypes.c_void_p]
+        set_context.restype = ctypes.c_bool
+        if set_context(ctypes.c_void_p(-4)):
+            _dpi_awareness_result = True
+            return True
+    except Exception:
+        # Windows versions predating the per-monitor-v2 API land here too.
+        pass
+
+    try:
+        set_aware = user32.SetProcessDPIAware
+        set_aware.argtypes = []
+        set_aware.restype = ctypes.c_bool
+        _dpi_awareness_result = bool(set_aware())
+        return _dpi_awareness_result
+    except Exception:
+        # DPI awareness is a best-effort enhancement; never block startup.
+        _dpi_awareness_result = False
+        return False
 
 
 class App:
@@ -829,6 +870,9 @@ def on_appearance(appearance, plugin):
 
 
 def main():
+    # The sticky window's Tk root is created after WinShun calls
+    # on_initialized(), so set process awareness before registering callbacks.
+    _set_process_dpi_awareness()
     winshun.serve(
         on_query,
         on_action,

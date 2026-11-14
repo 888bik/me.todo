@@ -1,4 +1,5 @@
 import json
+import ctypes
 import os
 import re
 import shutil
@@ -858,6 +859,67 @@ class LazyTkTests(unittest.TestCase):
         self.assertEqual(proc.stdout.strip(), "False")
 
 
+class DpiAwarenessTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_attempted = getattr(main, "_dpi_awareness_attempted", False)
+        self.previous_result = getattr(main, "_dpi_awareness_result", False)
+        main._dpi_awareness_attempted = False
+        main._dpi_awareness_result = False
+
+    def tearDown(self):
+        main._dpi_awareness_attempted = self.previous_attempted
+        main._dpi_awareness_result = self.previous_result
+
+    def test_process_dpi_awareness_is_declared_before_plugin_start_can_create_tk(self):
+        events = []
+        user32 = mock.MagicMock()
+        user32.SetProcessDpiAwarenessContext.return_value = 1
+
+        def fake_serve(*args, **kwargs):
+            # WinShun initialization is the first point where the plugin can
+            # create its Tk root, so process awareness must already be set.
+            events.append("tk-root-may-be-created")
+
+        with mock.patch.object(main.os, "name", "nt"), \
+                mock.patch.object(main.ctypes, "windll", mock.Mock(user32=user32), create=True), \
+                mock.patch.object(main.winshun, "serve", side_effect=fake_serve):
+            user32.SetProcessDpiAwarenessContext.side_effect = lambda context: (
+                events.append("dpi-awareness"), 1
+            )[1]
+            main.main()
+
+        self.assertEqual(events, ["dpi-awareness", "tk-root-may-be-created"])
+        self.assertEqual(user32.SetProcessDpiAwarenessContext.call_count, 1)
+        context = user32.SetProcessDpiAwarenessContext.call_args.args[0]
+        self.assertEqual(context.value, ctypes.c_void_p(-4).value)
+        user32.SetProcessDPIAware.assert_not_called()
+
+    def test_dpi_context_failure_falls_back_to_process_dpi_aware(self):
+        user32 = mock.MagicMock()
+        user32.SetProcessDpiAwarenessContext.side_effect = OSError("unsupported")
+        user32.SetProcessDPIAware.return_value = 1
+
+        with mock.patch.object(main.os, "name", "nt"), \
+                mock.patch.object(main.ctypes, "windll", mock.Mock(user32=user32), create=True):
+            self.assertTrue(main._set_process_dpi_awareness())
+
+        user32.SetProcessDpiAwarenessContext.assert_called_once()
+        user32.SetProcessDPIAware.assert_called_once_with()
+
+    def test_dpi_awareness_is_attempted_only_once(self):
+        user32 = mock.MagicMock()
+        user32.SetProcessDpiAwarenessContext.return_value = 1
+        with mock.patch.object(main.os, "name", "nt"), \
+                mock.patch.object(main.ctypes, "windll", mock.Mock(user32=user32), create=True):
+            self.assertTrue(main._set_process_dpi_awareness())
+            self.assertTrue(main._set_process_dpi_awareness())
+        user32.SetProcessDpiAwarenessContext.assert_called_once()
+
+    def test_non_windows_dpi_awareness_is_a_safe_noop(self):
+        with mock.patch.object(main.os, "name", "posix"):
+            self.assertFalse(main._set_process_dpi_awareness())
+
+
 class ManifestTests(unittest.TestCase):
     def setUp(self):
         with open(os.path.join(HERE, "plugin.json"), encoding="utf-8") as handle:
@@ -866,7 +928,7 @@ class ManifestTests(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(self.manifest["id"], "me.todo")
         self.assertEqual(self.manifest["id"], os.path.basename(HERE))
-        self.assertEqual(self.manifest["version"], "3.4.8")
+        self.assertEqual(self.manifest["version"], "3.4.9")
         self.assertEqual(self.manifest["author"], "888bik")
         self.assertEqual(self.manifest["license"], "MIT")
         self.assertEqual(self.manifest["icon"], "icon.png")

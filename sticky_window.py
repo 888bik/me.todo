@@ -8,6 +8,7 @@ import calendar
 import os
 import queue
 import threading
+import time
 from datetime import date, datetime, timedelta
 
 import store
@@ -483,7 +484,7 @@ def _run(commands, controller, settings):
     window = _StickyWindow(root, commands, controller, settings)
     _state["window"] = window
     _state["visible"] = False
-    root.after(40, window.pump)
+    root.after(100, window.pump)
     root.mainloop()
 
 
@@ -547,6 +548,7 @@ class _StickyWindow:
         self._topmost_restore_id = None
         self._hook = None
         self._hook_rect = None
+        self._last_hook_check = 0.0
         self._build()
 
     # -- construction ---------------------------------------------------
@@ -1068,11 +1070,49 @@ class _StickyWindow:
             _set_click_through(self.root, bool(hook_active))
             if announce:
                 self.status.configure(text="已锁定 · Ctrl+双击解锁 · Ctrl+Alt+U 紧急解锁")
+            return bool(hook_active)
         else:
             _set_click_through(self.root, False)
             self._stop_hook()
             if announce:
                 self.status.configure(text="")
+            return False
+
+    def _check_lock_hook(self, hidden=False):
+        """Reinstall a dead Windows mouse hook without sacrificing recovery input."""
+        if not self.locked or hidden or os.name != "nt":
+            return
+        now = time.monotonic()
+        if now - self._last_hook_check < 2.0:
+            return
+        self._last_hook_check = now
+
+        try:
+            import mouse_hook
+            if mouse_hook.is_active():
+                return
+        except Exception:
+            pass
+
+        try:
+            hook_active = bool(self._apply_lock(announce=False))
+        except Exception as exc:
+            hook_active = False
+            _log("mouse hook watchdog restart failed: %r" % (exc,))
+
+        if hook_active:
+            try:
+                self.status.configure(text="已锁定 · Ctrl+双击解锁 · Ctrl+Alt+U 紧急解锁")
+            except Exception:
+                pass
+        else:
+            # Be explicit even if _apply_lock's fallback already did this:
+            # a failed hook must never leave WS_EX_TRANSPARENT enabled.
+            _set_click_through(self.root, False)
+            try:
+                self.status.configure(text="钩子不可用，无法 Ctrl+双击解锁 · 请使用 Ctrl+Alt+U 解锁")
+            except Exception:
+                pass
 
     def _clear_lock_hint(self):
         if self.locked:
@@ -1201,7 +1241,8 @@ class _StickyWindow:
             hidden = str(self.root.state()) in ("withdrawn", "iconic")
         except Exception:
             hidden = False
-        self.root.after(500 if hidden else 40, self.pump)
+        self._check_lock_hook(hidden=hidden)
+        self.root.after(1000 if hidden else 100, self.pump)
 
     def _dispatch(self, command):
         name = command[0]

@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4.9
+- Declare Windows process DPI awareness before WinShun initialization can create the sticky-note Tk root: prefer `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` and fall back to `SetProcessDPIAware`; non-Windows and unsupported Windows versions remain non-fatal. Existing Tk DPI scaling is unchanged.
+- Add a two-second monotonic watchdog while the visible note is locked. If the low-level mouse hook dies, reinstall it; if reinstall fails, explicitly restore mouse input and show the `Ctrl+Alt+U` emergency-unlock hint.
+- Use the Windows system double-click rectangle (`SM_CXDOUBLECLK` / `SM_CYDOUBLECLK`) independently for horizontal and vertical distance checks, with the previous 10×10-pixel fallback when unavailable.
+- Slow the Tk command pump from 40ms to 100ms while visible and from 500ms to 1000ms while hidden. The 30-second reminder scheduler is unchanged.
+- Add regression tests for DPI-awareness ordering/fallback/once-only behavior, hook watchdog recovery/fallback, system double-click metrics, and pump intervals.
+
 ## 3.4.8
 - Window-resize drag no longer rebuilds every visible row on each canvas `<Configure>`: width/scrollregion updates stay immediate, the full row pass is debounced by 40ms and old pending passes are cancelled. A width-only change just re-places the existing cards.
 - `_update_visible_rows` is re-entrancy guarded, so the scrollregion -> yscroll cascade during a rebuild cannot start another full pass.

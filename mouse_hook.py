@@ -71,6 +71,9 @@ def _api():
     user32.GetDoubleClickTime.argtypes = []
     user32.GetDoubleClickTime.restype = wintypes.UINT
 
+    user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    user32.GetSystemMetrics.restype = ctypes.c_int
+
     kernel32.GetCurrentThreadId.argtypes = []
     kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
@@ -87,12 +90,35 @@ def _system_double_click_ms():
         return 500
 
 
+def _system_double_click_size():
+    """Return the Windows double-click rectangle (width, height) in pixels."""
+    fallback = (MAX_DISTANCE, MAX_DISTANCE)
+    if os.name != "nt":
+        return fallback
+    try:
+        user32, _kernel32 = _api()
+        width = int(user32.GetSystemMetrics(36))  # SM_CXDOUBLECLK
+        height = int(user32.GetSystemMetrics(37))  # SM_CYDOUBLECLK
+        if width > 0 and height > 0:
+            return width, height
+    except Exception:
+        pass
+    return fallback
+
+
 class DoubleClickTracker:
     """True for the second Ctrl+click when it is quick and close enough."""
 
-    def __init__(self, interval_ms=None, max_distance=MAX_DISTANCE):
+    def __init__(self, interval_ms=None, max_distance=None):
         self.interval_ms = _system_double_click_ms() if interval_ms is None else int(interval_ms)
-        self.max_distance = int(max_distance)
+        if max_distance is None:
+            max_distance = _system_double_click_size()
+        if isinstance(max_distance, (tuple, list)) and len(max_distance) == 2:
+            self.max_distance_x = max(0, int(max_distance[0]))
+            self.max_distance_y = max(0, int(max_distance[1]))
+        else:
+            self.max_distance_x = max(0, int(max_distance))
+            self.max_distance_y = self.max_distance_x
         self._last = None
 
     def down(self, x, y, time_ms, ctrl_held):
@@ -102,7 +128,10 @@ class DoubleClickTracker:
         last = self._last
         if last is not None:
             last_x, last_y, last_time = last
-            close = abs(x - last_x) <= self.max_distance and abs(y - last_y) <= self.max_distance
+            close = (
+                abs(x - last_x) <= self.max_distance_x
+                and abs(y - last_y) <= self.max_distance_y
+            )
             quick = (time_ms - last_time) <= self.interval_ms
             if quick and close:
                 self._last = None

@@ -41,6 +41,7 @@ class _FakeApi:
         self.message_script = None
 
         self.user32.GetDoubleClickTime.return_value = 500
+        self.user32.GetSystemMetrics.side_effect = lambda metric: {36: 10, 37: 10}[metric]
         self.user32.GetAsyncKeyState.return_value = 0x8000
         self.user32.CallNextHookEx.return_value = 42
         self.user32.GetMessageW.side_effect = self._get_message
@@ -110,6 +111,37 @@ class TrackerTests(unittest.TestCase):
         self.assertTrue(self.tracker.down(100, 100, 1100, True))
 
         self.assertFalse(self.tracker.down(100, 100, 1200, True))
+
+    def test_system_double_click_rectangle_uses_separate_width_and_height(self):
+        user32 = mock.MagicMock()
+        user32.GetSystemMetrics.side_effect = lambda metric: {36: 8, 37: 8}[metric]
+        with mock.patch("mouse_hook.os.name", "nt"), \
+                mock.patch("mouse_hook._api", return_value=(user32, mock.MagicMock())):
+            self.assertEqual(mouse_hook._system_double_click_size(), (8, 8))
+        self.assertEqual(user32.GetSystemMetrics.call_args_list, [mock.call(36), mock.call(37)])
+
+    def test_eight_pixel_system_rectangle_rejects_twelve_pixel_gap(self):
+        with mock.patch("mouse_hook._system_double_click_size", return_value=(8, 8)):
+            tracker = mouse_hook.DoubleClickTracker(interval_ms=500)
+        self.assertFalse(tracker.down(100, 100, 1000, True))
+        self.assertFalse(tracker.down(112, 100, 1200, True))
+
+    def test_thirty_two_pixel_system_rectangle_accepts_twelve_pixel_gap(self):
+        with mock.patch("mouse_hook._system_double_click_size", return_value=(32, 32)):
+            tracker = mouse_hook.DoubleClickTracker(interval_ms=500)
+        self.assertFalse(tracker.down(100, 100, 1000, True))
+        self.assertTrue(tracker.down(112, 100, 1200, True))
+
+    def test_system_rectangle_checks_horizontal_and_vertical_limits_separately(self):
+        with mock.patch("mouse_hook._system_double_click_size", return_value=(32, 8)):
+            tracker = mouse_hook.DoubleClickTracker(interval_ms=500)
+        self.assertFalse(tracker.down(100, 100, 1000, True))
+        self.assertFalse(tracker.down(112, 112, 1200, True))
+
+    def test_system_double_click_metrics_fall_back_when_unavailable(self):
+        with mock.patch("mouse_hook.os.name", "nt"), \
+                mock.patch("mouse_hook._api", side_effect=OSError("unavailable")):
+            self.assertEqual(mouse_hook._system_double_click_size(), (10, 10))
 
     def test_is_active_is_false_when_hook_is_not_installed(self):
         with mock.patch.object(mouse_hook, "_hook", None), mock.patch.object(mouse_hook, "_thread_id", 0):
@@ -183,6 +215,10 @@ class HookInstallTests(unittest.TestCase):
         user32 = self.api.user32
         self.assertEqual(user32.GetAsyncKeyState.argtypes, [ctypes.c_int])
         self.assertIs(user32.GetAsyncKeyState.restype, wintypes.SHORT)
+        self.assertEqual(user32.GetDoubleClickTime.argtypes, [])
+        self.assertIs(user32.GetDoubleClickTime.restype, wintypes.UINT)
+        self.assertEqual(user32.GetSystemMetrics.argtypes, [ctypes.c_int])
+        self.assertIs(user32.GetSystemMetrics.restype, ctypes.c_int)
 
         self.assertEqual(
             user32.GetMessageW.argtypes,

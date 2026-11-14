@@ -68,6 +68,88 @@ class DpiScalingTests(unittest.TestCase):
         root.tk.call.assert_called_once_with("tk", "scaling", 2.5)
 
 
+class HookWatchdogTests(unittest.TestCase):
+    def make_window(self):
+        window = object.__new__(sticky_window._StickyWindow)
+        window.commands = queue.Queue()
+        window.root = mock.MagicMock()
+        window.root.state.return_value = "normal"
+        window.locked = True
+        window._last_hook_check = 0.0
+        window.status = mock.MagicMock()
+        window._hook = None
+        window._set_topmost = mock.MagicMock()
+        window._stop_hook = mock.MagicMock()
+        window.lock_button = mock.MagicMock()
+        window.root.winfo_rootx.return_value = 10
+        window.root.winfo_rooty.return_value = 20
+        window.root.winfo_width.return_value = 300
+        window.root.winfo_height.return_value = 400
+        return window
+
+    def test_locked_pump_restarts_a_dead_hook(self):
+        window = self.make_window()
+        with mock.patch("sticky_window.os.name", "nt"), \
+                mock.patch("sticky_window.time.monotonic", return_value=10.0), \
+                mock.patch("mouse_hook.is_active", side_effect=[False, True]), \
+                mock.patch("mouse_hook.start", return_value=123) as start, \
+                mock.patch("sticky_window._set_click_through") as click_through, \
+                mock.patch.object(window, "_apply_lock", wraps=window._apply_lock) as apply_lock:
+            window.pump()
+
+        apply_lock.assert_called_once_with(announce=False)
+        start.assert_called_once()
+        self.assertEqual(window._hook, 123)
+        click_through.assert_called_with(window.root, True)
+        window.status.configure.assert_called_with(
+            text="已锁定 · Ctrl+双击解锁 · Ctrl+Alt+U 紧急解锁"
+        )
+
+    def test_failed_hook_restart_restores_clicks_and_shows_emergency_hint(self):
+        window = self.make_window()
+        with mock.patch("sticky_window.os.name", "nt"), \
+                mock.patch("sticky_window.time.monotonic", return_value=10.0), \
+                mock.patch("mouse_hook.is_active", side_effect=[False, False]), \
+                mock.patch("mouse_hook.start", return_value=None), \
+                mock.patch("sticky_window._set_click_through") as click_through:
+            window.pump()
+
+        click_through.assert_called_with(window.root, False)
+        self.assertIn("钩子不可用", window.status.configure.call_args.kwargs["text"])
+        self.assertIn("Ctrl+Alt+U", window.status.configure.call_args.kwargs["text"])
+
+    def test_pump_uses_one_hundred_ms_visible_and_one_thousand_ms_hidden(self):
+        window = self.make_window()
+        window.locked = False
+        with mock.patch("sticky_window.os.name", "nt"), \
+                mock.patch("sticky_window.time.monotonic", return_value=1.0):
+            window.root.state.return_value = "normal"
+            window.pump()
+            window.root.after.assert_called_with(100, window.pump)
+
+            window.root.after.reset_mock()
+            window.root.state.return_value = "withdrawn"
+            window.pump()
+            window.root.after.assert_called_once_with(1000, window.pump)
+
+    def test_watchdog_uses_elapsed_time_and_skips_hidden_windows(self):
+        window = self.make_window()
+        window._last_hook_check = 9.0
+        with mock.patch("sticky_window.os.name", "nt"), \
+                mock.patch("sticky_window.time.monotonic", return_value=10.0), \
+                mock.patch("mouse_hook.is_active") as is_active:
+            window.pump()
+        is_active.assert_not_called()
+
+        window.root.state.return_value = "withdrawn"
+        window._last_hook_check = 0.0
+        with mock.patch("sticky_window.os.name", "nt"), \
+                mock.patch("sticky_window.time.monotonic", return_value=10.0), \
+                mock.patch("mouse_hook.is_active") as is_active:
+            window.pump()
+        is_active.assert_not_called()
+
+
 class AppearancePaletteTests(unittest.TestCase):
     def setUp(self):
         self.appearance = dict(sticky_window._current_appearance)
@@ -981,18 +1063,6 @@ class V3WindowTests(unittest.TestCase):
             window._measure_row_height(),
         )
 
-    def test_pump_interval_slows_when_hidden(self):
-        window = self.make_window()
-        with mock.patch.object(window.root, "state", return_value="withdrawn"), \
-                mock.patch.object(window.root, "after") as after:
-            window.pump()
-        after.assert_called_once_with(500, window.pump)
-
-        with mock.patch.object(window.root, "state", return_value="normal"), \
-                mock.patch.object(window.root, "after") as after:
-            window.pump()
-        after.assert_called_once_with(40, window.pump)
-
     def test_import_reloads_todos_before_rendering(self):
         window = self.make_window()
         with mock.patch("tkinter.filedialog.askopenfilename", return_value="todos.json"), \
@@ -1009,7 +1079,7 @@ class V3WindowTests(unittest.TestCase):
         with mock.patch.object(window.root, "after") as after:
             window.pump()
 
-        self.assertIn(mock.call(40, window.pump), after.call_args_list)
+        self.assertIn(mock.call(100, window.pump), after.call_args_list)
 
     def test_lock_button_toggles_and_saves(self):
         window = self.make_window()
