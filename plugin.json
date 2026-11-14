@@ -6,7 +6,7 @@
     "zh": "待办",
     "en": "Todo"
   },
-  "version": "3.4.5",
+  "version": "3.4.8",
   "description": {
     "zh": "桌面待办便签：db 直接查看待办列表，支持搜索/添加/完成待办、标签与子任务、重复提醒、截止日期、今日/周/月视图、导入导出、完成统计、窗口尺寸记忆、单实例详情弹窗、月视图任务定位和锁定置顶",
     "en": "Desktop todo sticky note: show todo list with db, search/add/complete tasks, tags and subtasks, repeating reminders, due dates, today/week/month views, import/export, completion stats, remembered window size, reusable details dialog, calendar task navigation, lock-only always-on-top, light/dark theme"

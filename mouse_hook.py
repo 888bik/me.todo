@@ -175,6 +175,8 @@ def start(on_unlock, get_rect, log=None):
             tracker = DoubleClickTracker(interval_ms=_system_double_click_ms())
 
             def callback(n_code, w_param, l_param):
+                # Minimal by design: the low-level hook must see every mouse
+                # event, but only Ctrl+left-down reaches coordinate work.
                 try:
                     if n_code >= 0 and w_param == 0x0201:  # WM_LBUTTONDOWN
                         if user32.GetAsyncKeyState(0x11) & 0x8000:  # VK_CONTROL
@@ -206,8 +208,14 @@ def start(on_unlock, get_rect, log=None):
 
             message = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
-                user32.TranslateMessage(ctypes.byref(message))
-                user32.DispatchMessageW(ctypes.byref(message))
+                try:
+                    user32.TranslateMessage(ctypes.byref(message))
+                    user32.DispatchMessageW(ctypes.byref(message))
+                except Exception as exc:
+                    # A broken dispatched message must not kill the pump: that
+                    # would silently remove Ctrl+double-click unlocking.
+                    if log is not None:
+                        log("mouse message pump error: %r" % (exc,))
         except Exception as exc:
             outcome["error"] = exc
             ready.set()

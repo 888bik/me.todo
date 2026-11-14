@@ -212,6 +212,10 @@ class _Controller:
     def set_transparency(self, value):
         self.transparencies.append(int(value))
 
+    def reload_todos(self):
+        self.reloads = getattr(self, "reloads", 0) + 1
+        return self.list()
+
     def set_due(self, todo_id, iso):
         self.dues.append((todo_id, iso))
         for todo in self.todos:
@@ -670,6 +674,49 @@ class V3WindowTests(unittest.TestCase):
         self.assertEqual(window.filter, "done")
         self.assertEqual(window._filter_buttons["done"].cget("bg"), sticky_window.ACCENT_FILL)
 
+    def test_configure_events_are_coalesced_into_one_update(self):
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        # The initial canvas Configure may already have a pending rebuild.
+        if window._list_update_id is not None:
+            self.root.after_cancel(window._list_update_id)
+            window._list_update_id = None
+        calls = []
+        with mock.patch.object(window, "_update_visible_rows", side_effect=lambda: calls.append(1)), \
+                mock.patch.object(self.root, "after", side_effect=range(100)) as after, \
+                mock.patch.object(self.root, "after_cancel") as cancel:
+            for width in range(500, 530):
+                window._on_list_configure(mock.Mock(width=width))
+            callback = after.call_args_list[-1].args[1]
+            callback()
+
+        self.assertEqual(calls, [1])
+        self.assertEqual(cancel.call_count, 29)
+
+    def test_width_only_configure_replaces_cards_without_row_update(self):
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        width = window.canvas.winfo_width() + 80
+        with mock.patch.object(sticky_window._TaskRow, "update") as update, \
+                mock.patch.object(self.root, "after"):
+            window._on_list_configure(mock.Mock(width=width))
+
+        update.assert_not_called()
+        card = window._row_widgets["a"]
+        self.assertEqual(int(card.place_info()["width"]), width)
+        self.assertEqual(int(card.place_info()["x"]), 0)
+
+    def test_yscroll_during_layout_does_not_reenter_update(self):
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        with mock.patch.object(window, "_update_visible_rows") as update:
+            window._list_updating = True
+            window._on_list_yscroll("0.2", "0.8")
+        update.assert_not_called()
+
     def test_two_thousand_rows_render_only_a_windowful(self):
         now = datetime.now().astimezone()
         self.controller.todos = [
@@ -899,6 +946,21 @@ class V3WindowTests(unittest.TestCase):
 
         self.assertEqual(int(window._subtask_widget.place_info()["x"]), 18)
 
+    def test_row_date_labels_are_cached_between_updates(self):
+        window = self.make_window()
+        row = sticky_window._TaskRow(window, window.body)
+        due = (datetime.now().astimezone() + timedelta(days=2)).isoformat(timespec="seconds")
+        todo = {
+            "id": "cache", "text": "缓存", "done": False, "remind_at": None,
+            "reminded": False, "due_at": due, "priority": 0,
+        }
+        row.update(todo, compact=False, font_size=window.font_size)
+
+        with mock.patch("sticky_window.store.effective_due_datetime") as due_dt:
+            row.update(todo, compact=False, font_size=window.font_size)
+
+        due_dt.assert_not_called()
+
     def test_row_action_icons_use_title_font_and_extra_padding(self):
         window = self.make_window()
         row = sticky_window._TaskRow(window, window.body)
@@ -918,6 +980,36 @@ class V3WindowTests(unittest.TestCase):
             max(button.winfo_reqheight() for button in buttons),
             window._measure_row_height(),
         )
+
+    def test_pump_interval_slows_when_hidden(self):
+        window = self.make_window()
+        with mock.patch.object(window.root, "state", return_value="withdrawn"), \
+                mock.patch.object(window.root, "after") as after:
+            window.pump()
+        after.assert_called_once_with(500, window.pump)
+
+        with mock.patch.object(window.root, "state", return_value="normal"), \
+                mock.patch.object(window.root, "after") as after:
+            window.pump()
+        after.assert_called_once_with(40, window.pump)
+
+    def test_import_reloads_todos_before_rendering(self):
+        window = self.make_window()
+        with mock.patch("tkinter.filedialog.askopenfilename", return_value="todos.json"), \
+                mock.patch("sticky_window.store.import_todos", return_value=(1, 0)):
+            window._import()
+
+        self.assertEqual(getattr(self.controller, "reloads", 0), 1)
+
+    def test_hidden_pump_processes_show_and_restores_fast_interval(self):
+        window = self.make_window()
+        window.root.withdraw()
+        window.commands.put(("show", True))
+
+        with mock.patch.object(window.root, "after") as after:
+            window.pump()
+
+        self.assertIn(mock.call(40, window.pump), after.call_args_list)
 
     def test_lock_button_toggles_and_saves(self):
         window = self.make_window()
@@ -1205,11 +1297,71 @@ class V3WindowTests(unittest.TestCase):
             [],
         )
 
-    def test_unlocked_window_is_not_topmost_when_shown(self):
+    def test_unlocked_window_is_temporarily_topmost_when_shown(self):
         window = self.make_window()
         window.locked = False
-        window._dispatch(("show", False))
-        self.assertFalse(bool(self.root.attributes("-topmost")))
+        with mock.patch.object(self.root, "attributes") as attributes, \
+                mock.patch.object(self.root, "after") as after:
+            window._dispatch(("show", False))
+            self.assertIn(mock.call("-topmost", True), attributes.call_args_list)
+            restore = [call for call in after.call_args_list if call.args[0] == 200][-1]
+            restore.args[1]()
+
+        self.assertIn(mock.call("-topmost", False), attributes.call_args_list)
+
+    def test_show_lifts_and_releases_temporary_topmost_without_focus(self):
+        window = self.make_window()
+        self.root.withdraw()
+        with mock.patch.object(self.root, "attributes") as attributes, \
+                mock.patch.object(self.root, "lift") as lift, \
+                mock.patch.object(self.root, "after") as after, \
+                mock.patch.object(window.entry, "focus_set") as focus:
+            window._dispatch(("show", False))
+            self.assertIn(mock.call("-topmost", True), attributes.call_args_list)
+            restore = [call for call in after.call_args_list if call.args[0] == 200][-1]
+            restore.args[1]()
+
+        lift.assert_called()
+        self.assertIn(mock.call("-topmost", False), attributes.call_args_list)
+        focus.assert_not_called()
+
+    def test_already_shown_window_is_lifted_again(self):
+        window = self.make_window()
+        window._dispatch(("show", True))
+        with mock.patch.object(self.root, "attributes") as attributes, \
+                mock.patch.object(self.root, "lift") as lift, \
+                mock.patch.object(self.root, "after") as after:
+            window._dispatch(("show", False))
+            self.assertIn(mock.call("-topmost", True), attributes.call_args_list)
+            restore = [call for call in after.call_args_list if call.args[0] == 200][-1]
+            restore.args[1]()
+
+        lift.assert_called_once()
+        self.assertIn(mock.call("-topmost", False), attributes.call_args_list)
+
+    def test_locked_show_keeps_topmost_after_restore(self):
+        window = self.make_window()
+        window.locked = True
+        with mock.patch.object(self.root, "attributes") as attributes, \
+                mock.patch.object(window, "_start_hook", return_value=False), \
+                mock.patch.object(self.root, "after") as after:
+            window._dispatch(("show", False))
+            restore = [call for call in after.call_args_list if call.args[0] == 200][-1]
+            restore.args[1]()
+
+        self.assertNotIn(mock.call("-topmost", False), attributes.call_args_list)
+
+    def test_consecutive_shows_cancel_the_old_restore_timer(self):
+        window = self.make_window()
+        with mock.patch.object(self.root, "after", side_effect=["first", "second"]) as after, \
+                mock.patch.object(self.root, "after_cancel") as cancel, \
+                mock.patch.object(window, "_schedule_visible_update"):
+            window._dispatch(("show", False))
+            window._dispatch(("show", False))
+
+        cancel.assert_called_once_with("first")
+        self.assertEqual(window._topmost_restore_id, "second")
+        self.assertEqual(after.call_count, 2)
 
     @unittest.skipUnless(os.name == "nt", "需要 Windows 原生置顶行为")
     def test_locked_window_is_topmost_only_while_visible(self):

@@ -452,6 +452,40 @@ class HotkeyTests(PluginTestCase):
         self.assertEqual(plugin.tool.call_count, 2)
 
 
+class ImportReloadTests(PluginTestCase):
+    def write_import(self, todos):
+        path = self.dir / "import.json"
+        path.write_text(json.dumps({"todos": todos}), encoding="utf-8")
+        return path
+
+    def test_import_reloads_memory_and_survives_the_next_add(self):
+        path = self.write_import([
+            {"id": "imported", "text": "导入项"},
+        ])
+        added, skipped = store.import_todos(self.dir, path)
+        self.assertEqual((added, skipped), (1, 0))
+
+        self.app.reload_todos()
+        self.assertIn("导入项", [todo["text"] for todo in self.app.list()])
+
+        self.app.add("导入后新增")
+        loaded = store.load_todos(self.dir)
+        self.assertEqual({todo["text"] for todo in loaded}, {"导入项", "导入后新增"})
+
+    def test_duplicate_id_is_still_skipped(self):
+        self.app.add("已有")
+        existing = self.app.list()[0]
+        path = self.write_import([
+            {"id": existing["id"], "text": "重复"},
+            {"id": "fresh", "text": "新的"},
+        ])
+
+        added, skipped = store.import_todos(self.dir, path)
+
+        self.assertEqual((added, skipped), (1, 1))
+        self.assertEqual(len(store.load_todos(self.dir)), 2)
+
+
 class ReminderTests(PluginTestCase):
     def due_todo(self, text="到期"):
         todo = self.app.add(text)
@@ -570,6 +604,53 @@ class ReminderTests(PluginTestCase):
             self.assertTrue(self.app.reschedule_repeat(todo["id"], iso))
 
         self.assertEqual(save.call_count, 1)
+
+
+    def test_naive_imported_repeat_is_scheduled_once(self):
+        path = self.dir / "import.json"
+        path.write_text(json.dumps({"todos": [
+            {"id": "naive", "text": "无时区重复", "remind_at": "2020-01-01T09:00:00",
+             "repeat": {"type": "daily"}},
+        ]}), encoding="utf-8")
+        store.import_todos(self.dir, path)
+        self.app.reload_todos()
+        plugin = mock.Mock()
+
+        fired = main.fire_reminders(self.app, plugin)
+
+        self.assertEqual(fired, ["naive"])
+        loaded = store.load_todos(self.dir)[0]
+        self.assertFalse(loaded["reminded"])
+        self.assertGreater(
+            datetime.fromisoformat(loaded["remind_at"]),
+            datetime.now().astimezone(),
+        )
+        self.assertEqual(main.fire_reminders(self.app, plugin), [])
+
+    def test_repeat_without_a_next_occurrence_is_consumed_once(self):
+        todo = self.app.add("坏重复")
+        past = (datetime.now().astimezone() - timedelta(hours=1)).isoformat(timespec="seconds")
+        self.app.set_remind(todo["id"], past, {"type": "daily"})
+        plugin = mock.Mock()
+
+        with mock.patch("main._advance_repeat", return_value=None):
+            first = main.fire_reminders(self.app, plugin)
+            second = main.fire_reminders(self.app, plugin)
+
+        self.assertEqual(first, [todo["id"]])
+        self.assertEqual(second, [])
+        loaded = store.load_todos(self.dir)[0]
+        self.assertTrue(loaded["reminded"])
+
+    def test_advance_repeat_accepts_a_naive_anchor(self):
+        now = datetime.now().astimezone()
+
+        following = main._advance_repeat(
+            {"type": "daily"}, "2020-01-01T09:00:00", now
+        )
+
+        self.assertIsNotNone(following)
+        self.assertGreater(following, now)
 
 
 class SettingsTests(PluginTestCase):
@@ -785,7 +866,7 @@ class ManifestTests(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(self.manifest["id"], "me.todo")
         self.assertEqual(self.manifest["id"], os.path.basename(HERE))
-        self.assertEqual(self.manifest["version"], "3.4.5")
+        self.assertEqual(self.manifest["version"], "3.4.8")
         self.assertEqual(self.manifest["author"], "888bik")
         self.assertEqual(self.manifest["license"], "MIT")
         self.assertEqual(self.manifest["icon"], "icon.png")

@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.4.8
+- Window-resize drag no longer rebuilds every visible row on each canvas `<Configure>`: width/scrollregion updates stay immediate, the full row pass is debounced by 40ms and old pending passes are cancelled. A width-only change just re-places the existing cards.
+- `_update_visible_rows` is re-entrancy guarded, so the scrollregion -> yscroll cascade during a rebuild cannot start another full pass.
+- Row due/remind labels are cached by task data plus minute, so resizing/scrolling no longer reparses dates on every visible row.
+
+## 3.4.7
+- Showing the note now lifts it above other windows and applies a temporary 200ms topmost flag before restoring the normal unlocked state. This fixes newly added todos appearing behind the browser while keeping focus off the note (`focus=False`); locked windows stay topmost.
+- The delayed restore is cancellable: consecutive show commands cancel the old timer before scheduling a new one, so a stale timer cannot clear topmost early or after locking.
+
+## 3.4.6
+- Import now reloads `todos.json` into `App.todos` before rendering, so imported entries are visible and the next add/toggle cannot overwrite them with the stale in-memory list. Duplicate ids are still skipped.
+- The mouse-hook message pump wraps `TranslateMessage`/`DispatchMessageW` per message: a dispatch exception is logged and the pump keeps running; it still exits only on `GetMessageW <= 0` and unhooks normally. Ctrl+double-click no longer dies with the pump.
+- Repeat reminders parse anchors with `store.parse_dt` (naive strings count as local time); if no next occurrence can be calculated the todo is marked reminded once instead of toasting every 30 seconds. Imported `remind_at`/`repeat_base` are normalized to aware ISO, and unparsable times are cleared with a log.
+- The Tk command pump polls every 500ms while the note is withdrawn/iconic and returns to 40ms as soon as a show command runs; hidden queues are still drained.
+- README privacy wording now says only files chosen for import/export are read/written.
+- Confirmed the mouse-hook callback is already minimal (two comparisons plus `CallNextHookEx` for ordinary mouse messages); kept as an observation item, no code change beyond the pump guard.
+
 ## 3.4.5
 - Restore the 18px child-row indent that the 3.4.0 virtual-list rewrite dropped: child task cards are placed at x=18 with width reduced by 18, while top-level rows stay at x=0. The reused row pool recomputes the indent from the current task on every placement.
 - The inline new-subtask entry uses the same 18px indent so it lines up with the child rows it creates.

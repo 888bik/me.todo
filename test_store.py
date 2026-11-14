@@ -378,6 +378,25 @@ class OccurrenceParityTests(unittest.TestCase):
                          [date(2026, 11, 9), date(2026, 11, 10)])
 
 
+    def test_import_normalizes_and_clears_reminder_times(self):
+        data_dir = make_data_dir()
+        self.addCleanup(shutil.rmtree, data_dir, True)
+        path = data_dir / "import.json"
+        path.write_text(json.dumps({"todos": [
+            {"id": "naive", "text": "无时区", "remind_at": "2020-01-01T09:00:00",
+             "repeat_base": "2020-01-01T09:00:00", "repeat": {"type": "daily"}},
+            {"id": "broken", "text": "坏时间", "remind_at": "not-a-date"},
+        ]}), encoding="utf-8")
+
+        added, skipped = store.import_todos(data_dir, path)
+
+        self.assertEqual((added, skipped), (2, 0))
+        loaded = store.load_todos(data_dir)
+        self.assertTrue(loaded[0]["remind_at"].endswith("+08:00"))
+        self.assertEqual(loaded[0]["repeat_base"], loaded[0]["remind_at"])
+        self.assertIsNone(loaded[1]["remind_at"])
+
+
 class RepeatStorageTests(unittest.TestCase):
     def setUp(self):
         self.dir = make_data_dir()

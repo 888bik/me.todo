@@ -79,6 +79,12 @@ class App:
         return value
 
     # -- todos -----------------------------------------------------------
+    def reload_todos(self):
+        """Reload the on-disk list after an import changed todos.json."""
+        with self.lock:
+            self.todos = store.load_todos(self.data_dir)
+        return [dict(todo) for todo in self.todos]
+
     def list(self):
         """Top-level sorted; each parent is immediately followed by its children.
 
@@ -456,9 +462,8 @@ def register_hotkey(app_instance, plugin, attempt=0):
 
 def _advance_repeat(repeat, remind_at, now):
     """Walk the schedule forward past `now`; missed runs are skipped, not replayed."""
-    try:
-        current = datetime.fromisoformat(str(remind_at))
-    except (TypeError, ValueError):
+    current = store.parse_dt(remind_at)
+    if current is None:
         return None
     for _ in range(10000):
         following = store.next_occurrence(repeat, current)
@@ -497,10 +502,20 @@ def fire_reminders(app_instance, plugin, now=None):
         if repeat:
             anchor = todo.get("repeat_base") or todo.get("remind_at")
             following = _advance_repeat(repeat, anchor, now)
-            if following is not None and app_instance.reschedule_repeat(
-                todo["id"], following.isoformat(timespec="seconds"), save=False
-            ):
-                fired.append(todo["id"])
+            if following is not None:
+                if app_instance.reschedule_repeat(
+                    todo["id"], following.isoformat(timespec="seconds"), save=False
+                ):
+                    fired.append(todo["id"])
+            else:
+                # An invalid repeat must not stay due forever and toast every
+                # 30 seconds; consume it once instead.
+                if app_instance.mark_reminded(todo["id"], save=False):
+                    fired.append(todo["id"])
+                    winshun.debug(
+                        "me.todo: no next occurrence for %s; marked reminded once"
+                        % todo["id"]
+                    )
         elif app_instance.mark_reminded(todo["id"], save=False):
             fired.append(todo["id"])
     if fired:

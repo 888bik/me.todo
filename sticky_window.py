@@ -536,9 +536,15 @@ class _StickyWindow:
         self._list_items = []
         self._row_pool = []
         self._row_height_cache = {}
+        self._row_items = {}
+        self._subtask_item = None
+        self._list_update_id = None
+        self._list_updating = False
+        self._list_signature = None
         self._subtask_widget = None
         self._subtask_frame = None
         self.locked = bool(self.config.get("locked"))
+        self._topmost_restore_id = None
         self._hook = None
         self._hook_rect = None
         self._build()
@@ -1010,6 +1016,35 @@ class _StickyWindow:
         except Exception:
             pass
 
+    def _raise_window(self):
+        """Bring a shown note forward, then drop the temporary topmost flag."""
+        try:
+            self.root.lift()
+        except Exception:
+            pass
+        try:
+            self.root.attributes("-topmost", True)
+        except Exception:
+            pass
+        self._cancel_topmost_restore()
+        try:
+            self._topmost_restore_id = self.root.after(200, self._restore_topmost)
+        except Exception:
+            self._topmost_restore_id = None
+
+    def _cancel_topmost_restore(self):
+        if self._topmost_restore_id is not None:
+            try:
+                self.root.after_cancel(self._topmost_restore_id)
+            except Exception:
+                pass
+            self._topmost_restore_id = None
+
+    def _restore_topmost(self):
+        self._topmost_restore_id = None
+        if not self.locked:
+            self._set_topmost(False)
+
     def _toggle_lock(self):
         self._set_locked_ui(not self.locked)
         self.controller.set_locked(self.locked)
@@ -1147,6 +1182,11 @@ class _StickyWindow:
         except Exception as exc:
             self.status.configure(text="导入失败：%s" % exc)
             return
+        reload_todos = getattr(self.controller, "reload_todos", None)
+        if reload_todos is not None:
+            reload_todos()
+        elif hasattr(self.controller, "todos"):
+            self.controller.todos = store.load_todos(self.controller.data_dir)
         self.status.configure(text="导入 %d 条，跳过 %d 条重复" % (added, skipped))
         self._render()
 
@@ -1157,7 +1197,11 @@ class _StickyWindow:
                 self._dispatch(self.commands.get_nowait())
         except queue.Empty:
             pass
-        self.root.after(40, self.pump)
+        try:
+            hidden = str(self.root.state()) in ("withdrawn", "iconic")
+        except Exception:
+            hidden = False
+        self.root.after(500 if hidden else 40, self.pump)
 
     def _dispatch(self, command):
         name = command[0]
@@ -1178,6 +1222,7 @@ class _StickyWindow:
                 self._set_topmost(False)
                 _set_click_through(self.root, False)
                 self._stop_hook()
+            self._raise_window()
             if command[1]:
                 self.root.after_idle(self.entry.focus_set)
         elif name == "hide":
@@ -1389,9 +1434,18 @@ class _StickyWindow:
         self.scrollbar = scrollbar
         self.canvas = canvas
         self.rows = rows
+        if self._list_update_id is not None:
+            try:
+                self.root.after_cancel(self._list_update_id)
+            except Exception:
+                pass
+            self._list_update_id = None
         self._row_pool = []
         self._row_widgets = {}
         self._row_actions = {}
+        self._row_items = {}
+        self._subtask_item = None
+        self._list_signature = None
         self._check_vars = []
         self._subtask_widget = None
         self._subtask_frame = None
@@ -1403,9 +1457,49 @@ class _StickyWindow:
             self.canvas.itemconfigure(self._canvas_window, width=width)
             self.rows.configure(width=width)
             self.canvas.configure(scrollregion=(0, 0, width, max(1, self._list_total)))
-            self._update_visible_rows()
         except Exception:
-            pass
+            return
+        # Re-place the already-built cards immediately (cheap, no per-row
+        # update); coalesce the full rebuild behind a short debounce.
+        self._reflow_visible_rows(width)
+        self._schedule_visible_update()
+
+    def _schedule_visible_update(self):
+        if self._list_update_id is not None:
+            try:
+                self.root.after_cancel(self._list_update_id)
+            except Exception:
+                pass
+            self._list_update_id = None
+        try:
+            self._list_update_id = self.root.after(40, self._run_scheduled_visible_update)
+        except Exception:
+            self._list_update_id = None
+
+    def _run_scheduled_visible_update(self):
+        self._list_update_id = None
+        self._update_visible_rows()
+
+    def _place_card(self, card, item, width):
+        todo = item["todo"]
+        is_child = bool(todo.get("parent_id"))
+        x = 18 if is_child else 0
+        card_width = max(1, width - 18) if is_child else width
+        card.place(x=x, y=item["offset"], width=card_width, height=item["height"])
+
+    def _reflow_visible_rows(self, width):
+        if self._list_updating or not getattr(self, "_row_widgets", None):
+            return
+        width = max(1, int(width))
+        for todo_id, card in list(self._row_widgets.items()):
+            item = self._row_items.get(todo_id)
+            if item is not None:
+                self._place_card(card, item, width)
+        if self._subtask_widget is not None and self._subtask_item is not None:
+            self._subtask_widget.place(
+                x=18, y=self._subtask_item["offset"],
+                width=max(1, width - 18), height=self._subtask_item["height"],
+            )
 
     def _on_list_yscroll(self, first, last):
         try:
@@ -1413,7 +1507,8 @@ class _StickyWindow:
             self._list_yview = float(first)
         except Exception:
             pass
-        self._update_visible_rows()
+        if not self._list_updating:
+            self._update_visible_rows()
 
     def _ensure_subtask_widget(self):
         if self._subtask_widget is not None:
@@ -1432,6 +1527,8 @@ class _StickyWindow:
         self._subtask_entry = entry
 
     def _update_visible_rows(self):
+        if self._list_updating:
+            return
         if not hasattr(self, "canvas") or not self._list_items:
             return
         try:
@@ -1451,50 +1548,59 @@ class _StickyWindow:
             item for item in self._list_items
             if item["offset"] + item["height"] >= first_y and item["offset"] <= last_y
         ]
-        pool_index = 0
-        self._row_widgets = {}
-        self._row_actions = {}
-        self._check_vars = []
-        subtask_item = None
-        for item in visible:
-            if item["kind"] == "subtask":
-                subtask_item = item
-                continue
-            while len(self._row_pool) <= pool_index:
-                self._row_pool.append(_TaskRow(self, self.rows))
-            row = self._row_pool[pool_index]
-            todo = item["todo"]
-            selected = todo["id"] == getattr(self, "_selected_todo_id", None)
-            row.update(todo, compact=self.compact, font_size=self.font_size, selected=selected)
-            is_child = bool(todo.get("parent_id"))
-            x = 18 if is_child else 0
-            card_width = max(1, width - 18) if is_child else width
-            row.card.place(x=x, y=item["offset"], width=card_width, height=item["height"])
-            self._row_widgets[todo["id"]] = row.card
-            self._row_actions[todo["id"]] = row.actions
-            self._check_vars.append(row.variable)
-            pool_index += 1
-        for row in self._row_pool[pool_index:]:
-            row.card.place_forget()
+        signature = tuple((item["kind"], item["todo"]["id"]) for item in visible)
+        if signature == self._list_signature:
+            return
+        self._list_updating = True
+        try:
+            pool_index = 0
+            self._row_widgets = {}
+            self._row_actions = {}
+            self._row_items = {}
+            self._check_vars = []
+            subtask_item = None
+            for item in visible:
+                if item["kind"] == "subtask":
+                    subtask_item = item
+                    continue
+                while len(self._row_pool) <= pool_index:
+                    self._row_pool.append(_TaskRow(self, self.rows))
+                row = self._row_pool[pool_index]
+                todo = item["todo"]
+                selected = todo["id"] == getattr(self, "_selected_todo_id", None)
+                row.update(todo, compact=self.compact, font_size=self.font_size, selected=selected)
+                self._place_card(row.card, item, width)
+                self._row_widgets[todo["id"]] = row.card
+                self._row_actions[todo["id"]] = row.actions
+                self._row_items[todo["id"]] = item
+                self._check_vars.append(row.variable)
+                pool_index += 1
+            for row in self._row_pool[pool_index:]:
+                row.card.place_forget()
 
-        if self._subtask_parent is not None:
-            self._ensure_subtask_widget()
-            item = next(
-                (entry for entry in self._list_items if entry["kind"] == "subtask"),
-                subtask_item,
-            )
-            if item is not None:
-                self._subtask_widget.place(
-                    x=18, y=item["offset"], width=max(1, width - 18), height=item["height"]
+            self._subtask_item = subtask_item
+            if self._subtask_parent is not None:
+                self._ensure_subtask_widget()
+                item = next(
+                    (entry for entry in self._list_items if entry["kind"] == "subtask"),
+                    subtask_item,
                 )
-                self._subtask_widget.lift()
-                if getattr(self, "_subtask_needs_focus", False):
-                    self._subtask_needs_focus = False
-                    self._subtask_entry.focus_set()
-            else:
+                if item is not None:
+                    self._subtask_item = item
+                    self._subtask_widget.place(
+                        x=18, y=item["offset"], width=max(1, width - 18), height=item["height"]
+                    )
+                    self._subtask_widget.lift()
+                    if getattr(self, "_subtask_needs_focus", False):
+                        self._subtask_needs_focus = False
+                        self._subtask_entry.focus_set()
+                else:
+                    self._subtask_widget.place_forget()
+            elif self._subtask_widget is not None:
                 self._subtask_widget.place_forget()
-        elif self._subtask_widget is not None:
-            self._subtask_widget.place_forget()
+            self._list_signature = signature
+        finally:
+            self._list_updating = False
 
     def _open_details(self, todo):
         self._ensure_detail_panel()
@@ -2981,6 +3087,8 @@ class _TaskRow:
 
         self.actions = tk.Frame(self.card, bg=CARD)
         self.action_buttons = []
+        self._date_cache_key = None
+        self._date_cache = (None, TEXT, None)
 
         def action(text, command, danger=False):
             button = tk.Button(
@@ -3067,6 +3175,36 @@ class _TaskRow:
         if self.todo is not None:
             self.window._start_subtask(self.todo["id"])
 
+    def _date_labels(self, todo, done):
+        """Cache due/remind text per task + minute, not per Configure event."""
+        now = datetime.now().astimezone()
+        key = (
+            todo.get("due_at"), todo.get("remind_at"), bool(todo.get("done")),
+            repr(todo.get("repeat")), now.replace(second=0, microsecond=0),
+        )
+        if key == self._date_cache_key:
+            return self._date_cache
+        due = store.effective_due(todo)
+        due_dt = store.effective_due_datetime(todo)
+        due_text = None
+        color = TEXT
+        if due:
+            due_text = "截止 " + (_short_when(due) or store.format_reminder(due))
+            repeat = store.format_repeat(todo.get("repeat"))
+            if repeat:
+                due_text += " · " + repeat
+            if done:
+                color = MUTED
+            elif due_dt is not None and due_dt < now:
+                color = DANGER
+        remind_dt = store.parse_dt(todo.get("remind_at"))
+        remind_text = None
+        if remind_dt is not None and (due_dt is None or remind_dt != due_dt):
+            remind_text = "提醒 " + _short_when(todo["remind_at"])
+        self._date_cache_key = key
+        self._date_cache = (due_text, color, remind_text)
+        return self._date_cache
+
     def update(self, todo, compact=False, font_size=10, selected=False):
         self.todo = dict(todo)
         self.variable.set(bool(todo.get("done")))
@@ -3104,26 +3242,12 @@ class _TaskRow:
         if todo.get("note"):
             self.note_label.configure(text="📝", font=_font(small))
             self.note_label.pack(side="left")
-        due = store.effective_due(todo)
-        due_dt = store.effective_due_datetime(todo)
-        if due:
-            text = "截止 " + (_short_when(due) or store.format_reminder(due))
-            repeat = store.format_repeat(todo.get("repeat"))
-            if repeat:
-                text += " · " + repeat
-            if done:
-                color = MUTED
-            elif due_dt is not None and due_dt < datetime.now().astimezone():
-                color = DANGER
-            else:
-                color = TEXT
-            self.due_label.configure(text=text, fg=color, font=_font(small))
+        due_text, due_color, remind_text = self._date_labels(todo, done)
+        if due_text is not None:
+            self.due_label.configure(text=due_text, fg=due_color, font=_font(small))
             self.due_label.pack(side="left")
-        remind_dt = store.parse_dt(todo.get("remind_at"))
-        if remind_dt is not None and (due_dt is None or remind_dt != due_dt):
-            self.remind_label.configure(
-                text="提醒 " + _short_when(todo["remind_at"]), font=_font(small)
-            )
+        if remind_text is not None:
+            self.remind_label.configure(text=remind_text, font=_font(small))
             self.remind_label.pack(side="left")
         total, done_children = self.window._child_counts.get(todo.get("id"), (0, 0))
         if total:

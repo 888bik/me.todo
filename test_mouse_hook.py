@@ -38,6 +38,7 @@ class _FakeApi:
         self.proc = None
         self.install_calls = 0
         self.unhooked = []
+        self.message_script = None
 
         self.user32.GetDoubleClickTime.return_value = 500
         self.user32.GetAsyncKeyState.return_value = 0x8000
@@ -62,6 +63,8 @@ class _FakeApi:
         return tid
 
     def _get_message(self, *args):
+        if self.message_script is not None:
+            return self.message_script.pop(0) if self.message_script else 0
         gate = self.gates.setdefault(threading.current_thread(), threading.Event())
         if self.block:
             gate.wait(5)
@@ -131,8 +134,8 @@ class HookInstallTests(unittest.TestCase):
         mouse_hook._thread_id = 0
         mouse_hook._api_cache = None
 
-    def start_hook(self, block=True, release_on_quit=True, get_rect=None, on_unlock=None):
-        self.api = _FakeApi(block=block, release_on_quit=release_on_quit)
+    def start_hook(self, block=True, release_on_quit=True, get_rect=None, on_unlock=None, api=None):
+        self.api = api or _FakeApi(block=block, release_on_quit=release_on_quit)
 
         os_patch = mock.patch("mouse_hook.os.name", "nt")
         os_patch.start()
@@ -232,6 +235,26 @@ class HookInstallTests(unittest.TestCase):
         mouse_hook.stop()
 
         self.assertIs(mouse_hook._callback, callback)
+
+    def test_dispatch_error_does_not_kill_the_message_pump(self):
+        api = _FakeApi(block=False)
+        api.message_script = [1, 1, 0]
+        errors = []
+
+        def dispatch(*args):
+            if not errors:
+                errors.append(True)
+                self.assertTrue(mouse_hook.is_active())
+                raise RuntimeError("boom")
+            return 1
+
+        api.user32.DispatchMessageW.side_effect = dispatch
+        self.start_hook(api=api)
+        mouse_hook._thread.join(2)
+
+        self.assertFalse(mouse_hook._thread.is_alive())
+        self.assertEqual(api.user32.DispatchMessageW.call_count, 2)
+        self.assertEqual(api.unhooked, [0x1001])
 
     def test_stop_waits_for_the_hook_thread_to_exit(self):
         self.start_hook()

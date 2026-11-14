@@ -74,6 +74,21 @@ def parse_dt(iso):
     return value
 
 
+def _normalize_reminder_time(value, label):
+    """Import/load values as aware local ISO; unparsable values are cleared."""
+    if value is None:
+        return None
+    parsed = parse_dt(value)
+    if parsed is None:
+        try:
+            import winshun
+            winshun.debug("me.todo: invalid %s cleared: %r" % (label, value))
+        except Exception:
+            pass
+        return None
+    return parsed.isoformat(timespec="seconds")
+
+
 def effective_due(todo):
     """The one deadline used by sorting, overdue, calendar and today view."""
     return todo.get("due_at") or todo.get("remind_at")
@@ -204,6 +219,7 @@ def _clean(raw):
     remind_at = raw.get("remind_at")
     if remind_at is not None and not isinstance(remind_at, str):
         return None
+    remind_at = _normalize_reminder_time(remind_at, "remind_at")
     created = raw.get("created_at")
     parent = raw.get("parent_id")
 
@@ -226,7 +242,7 @@ def _clean(raw):
         "note": raw.get("note") if isinstance(raw.get("note"), str) else "",
         "due_at": optional_time("due_at"),
         "completed_at": optional_time("completed_at"),
-        "repeat_base": optional_time("repeat_base"),
+        "repeat_base": _normalize_reminder_time(optional_time("repeat_base"), "repeat_base"),
     }
 
 
