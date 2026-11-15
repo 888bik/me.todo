@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.5.0
+- Split the 3430-line `sticky_window.py` into a facade/core plus flat sibling modules, with no behavior, UI, data-format or timing changes:
+  - `sticky_window_theme.py`: palette colors, priority colors/labels, font family, light/dark palettes, `_color`, `_palette_snapshot`, `_set_palette`, `_recolor_widget_tree`, `_font`.
+  - `sticky_window_dpi.py`: `_load_tk`, `dpi_scale`, `_apply_dpi_scaling`, `_alpha_value`.
+  - `sticky_window_utils.py`: view/nav constants, `REPEAT_OPTIONS`, `size_for_view`, `_local_datetime`, `_short_when`, `_needs_scroll`, `_log`, `_hide_from_taskbar`, `_set_click_through`, `_dialog_position`, `_place_dialog`, `_month_grid`.
+  - `sticky_window_row.py`: `_TaskRow`.
+  - `sticky_window_details.py`: `_DetailsPanel` plus `DetailsMixin` (`_open_details`, `_ensure_detail_panel`, `_show_detail_panel`, `_hide_detail_panel`, `_select_todo`, `_activate_row`).
+  - `sticky_window_dialogs.py`: `_FontSettings`, `_ReminderPicker`, `_StatsDialog`.
+  - `sticky_window_nav.py`: `NavMixin` (navigation build/switch/counts, search handlers, nav buttons).
+  - `sticky_window_list.py`: `ListMixin` (virtual list, row measuring/place/reflow, scroll/wheel/hover, legacy `_add_row`).
+  - `sticky_window_calendar.py`: `CalendarMixin` (week/month rendering, day navigation, calendar notes).
+  - `sticky_window_lock.py`: `LockMixin` (topmost/lift, lock UI, hook lifecycle/watchdog).
+  - `sticky_window_actions.py`: `ActionsMixin` (composer, add/toggle/delete/undo, inline edit, subtasks, import/export).
+- `sticky_window.py` is now the 817-line facade: `_StickyWindow` composes the six mixins, keeps construction/geometry/appearance/fonts/settings/pump/dispatch/render/lifecycle, and re-exports every public and test-used name.
+- Palette changes are propagated to every split module through a registry; Tk is still loaded only by `_load_tk` and is published to widget modules from the facade. No module imports tkinter at top level.
+- Test-only follow-up: `DpiAwareLayoutTests` now maps the root (`deiconify` + `update_idletasks`) before reading geometry, and mocks the 1280×1024 screen for the detail-panel clamp. Plugin code is unchanged; this removes Windows withdrawn-window and stale-screen-size sensitivity.
+
 ## 3.4.10
 - Measure the left navigation width with Tk font metrics for the widest filter/view labels, two-digit counts, and the `逾期 99 · 今日到期 99` hint; recompute after construction, font changes, and navigation/count updates while retaining the DPI-scaled 160px minimum.
 - Scale the window minimum/default dimensions and the details sidebar width by the startup DPI factor. Clamp physical window geometry to the available screen size.

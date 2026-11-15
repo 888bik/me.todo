@@ -118,6 +118,8 @@ class DpiAwareLayoutTests(unittest.TestCase):
 
     def test_saved_logical_geometry_round_trips_at_150_percent(self):
         root, window, controller = self.make_window(1.5)
+        root.deiconify()
+        root.update_idletasks()
         root.geometry("1080x780+40+60")
         root.update_idletasks()
 
@@ -138,8 +140,12 @@ class DpiAwareLayoutTests(unittest.TestCase):
         root, window, _controller = self.make_window(
             1.5, {"window_width": 720, "window_height": 520}
         )
+        root.deiconify()
+        root.update_idletasks()
         window._ensure_detail_panel()
-        window._show_detail_panel()
+        with mock.patch.object(root, "winfo_screenwidth", return_value=1280), \
+                mock.patch.object(root, "winfo_screenheight", return_value=1024):
+            window._show_detail_panel()
         root.update_idletasks()
 
         self.assertEqual(window._detail_base_width, 1080)
@@ -153,6 +159,8 @@ class DpiAwareLayoutTests(unittest.TestCase):
         root, window, _controller = self.make_window(
             1.5, {"window_width": 400, "window_height": 500}
         )
+        root.deiconify()
+        root.update_idletasks()
         window._apply_size()
         root.update_idletasks()
 
@@ -165,6 +173,8 @@ class DpiAwareLayoutTests(unittest.TestCase):
         root, window, _controller = self.make_window(
             1.5, {"window_width": 2000, "window_height": 1000}
         )
+        root.deiconify()
+        root.update_idletasks()
         with mock.patch.object(root, "winfo_screenwidth", return_value=1000), \
                 mock.patch.object(root, "winfo_screenheight", return_value=700):
             window._apply_size()
@@ -176,6 +186,8 @@ class DpiAwareLayoutTests(unittest.TestCase):
         root, window, _controller = self.make_window(
             1.5, {"window_width": 720, "window_height": 520}
         )
+        root.deiconify()
+        root.update_idletasks()
         window._apply_size()
         root.update_idletasks()
 
