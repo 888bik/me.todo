@@ -94,16 +94,27 @@ class App:
 
     def icon_path(self):
         """The window keeps the blue check; the plugin card uses the line icon."""
-        folder = getattr(self.plugin, "plugin_dir", "") or ""
+        # __file__ is the only reliable plugin-location source: the host has
+        # historically supplied WS_PLUGIN_DIR/argv[0] paths that can be stale.
+        folder = os.path.dirname(os.path.abspath(__file__))
         for name in ("sticky.png", "icon.png"):
-            path = os.path.join(str(folder), name)
+            path = os.path.join(folder, name)
+            if os.path.exists(path):
+                return path
+        fallback = getattr(self.plugin, "plugin_dir", "") or ""
+        for name in ("sticky.png", "icon.png"):
+            path = os.path.join(str(fallback), name)
             if os.path.exists(path):
                 return path
         return ""
 
     def icon_ico_path(self):
-        folder = getattr(self.plugin, "plugin_dir", "") or ""
-        path = os.path.join(str(folder), "icon.ico")
+        folder = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(folder, "icon.ico")
+        if os.path.exists(path):
+            return path
+        fallback = getattr(self.plugin, "plugin_dir", "") or ""
+        path = os.path.join(str(fallback), "icon.ico")
         return path if os.path.exists(path) else ""
 
     def save_window_position(self, x, y, width=None, height=None):

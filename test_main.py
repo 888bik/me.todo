@@ -795,6 +795,14 @@ class TodoAppTests(PluginTestCase):
         self.assertTrue(self.app.set_remind(todo["id"], None))
         self.assertIsNone(self.app.list()[0]["remind_at"])
 
+    def test_icon_paths_are_resolved_from_the_plugin_file(self):
+        self.app.plugin = mock.Mock(plugin_dir=os.path.join(self.dir, "not-the-plugin"))
+
+        self.assertTrue(self.app.icon_path().endswith("sticky.png"))
+        self.assertTrue(os.path.exists(self.app.icon_path()))
+        self.assertTrue(self.app.icon_ico_path().endswith("icon.ico"))
+        self.assertTrue(os.path.exists(self.app.icon_ico_path()))
+
 
 class SortTests(PluginTestCase):
     def test_open_by_deadline_then_no_deadline_then_done(self):

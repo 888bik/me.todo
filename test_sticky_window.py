@@ -1098,6 +1098,8 @@ class V3WindowTests(unittest.TestCase):
         self.assertIn("future", window._row_widgets)
         self.assertIn("nodate", window._row_widgets)
         self.assertEqual(list(window._row_by_todo_id), ["open", "future", "nodate"])
+        self.assertEqual(str(window.count.cget("text")), "3 条未完成")
+        self.assertEqual(len(window._row_by_todo_id), 3)
         row = window._row_by_todo_id["open"]
         self.assertTrue(row.read_only)
         self.assertEqual(str(row.check.cget("state")), "disabled")
