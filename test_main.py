@@ -453,6 +453,21 @@ class HotkeyTests(PluginTestCase):
         self.assertEqual(plugin.tool.call_count, 2)
 
 
+class SortCacheTests(PluginTestCase):
+    def test_list_reuses_the_cached_order_until_a_mutation(self):
+        self.app.add("缓存测试")
+        self.app.list()
+        with mock.patch("main.store.effective_due_datetime") as due:
+            self.assertEqual(len(self.app.list()), 1)
+
+        due.assert_not_called()
+        todo = self.app.add("缓存后新增")
+        with mock.patch("main.store.effective_due_datetime", wraps=store.effective_due_datetime) as due:
+            ordered = self.app.list()
+        self.assertIn(todo["id"], [item["id"] for item in ordered])
+        self.assertGreaterEqual(due.call_count, 1)
+
+
 class ImportReloadTests(PluginTestCase):
     def write_import(self, todos):
         path = self.dir / "import.json"
@@ -928,7 +943,7 @@ class ManifestTests(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(self.manifest["id"], "me.todo")
         self.assertEqual(self.manifest["id"], os.path.basename(HERE))
-        self.assertEqual(self.manifest["version"], "3.5.0")
+        self.assertEqual(self.manifest["version"], "3.5.2")
         self.assertEqual(self.manifest["author"], "888bik")
         self.assertEqual(self.manifest["license"], "MIT")
         self.assertEqual(self.manifest["icon"], "icon.png")

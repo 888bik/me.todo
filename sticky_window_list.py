@@ -5,6 +5,7 @@ import os
 import queue
 import threading
 import time
+import bisect
 from datetime import date, datetime, timedelta
 
 import store
@@ -24,17 +25,41 @@ register_palette_module(globals())
 class ListMixin:
     def _render_list(self, todos, empty_text="还没有待办"):
         if not todos:
-            self._list_total = 0
-            self._list_items = []
-            empty = tk.Frame(self.body, bg=BG)
-            empty.pack(fill="both", expand=True, pady=40)
-            tk.Label(empty, text=empty_text, bg=BG, fg=MUTED, font=_font(self.font_size)).pack()
-            tk.Label(
-                empty, text="在下面输入一条，回车添加", bg=BG, fg=MUTED,
-                font=_font(max(8, self.font_size - 1)),
-            ).pack(pady=(4, 0))
+            self._render_empty_list(empty_text)
             return
         self._render_virtual_list(todos)
+
+    def _render_empty_list(self, empty_text):
+        self._list_total = 0
+        self._list_items = []
+        self._list_signature = None
+        self._layout_signature = None
+        if self.canvas is not None:
+            try:
+                self.canvas.pack_forget()
+                self.scrollbar.pack_forget()
+            except Exception:
+                pass
+        if self._list_empty_frame is not None:
+            try:
+                self._list_empty_frame.destroy()
+            except Exception:
+                pass
+        empty = tk.Frame(self.body, bg=BG)
+        empty.pack(fill="both", expand=True, pady=40)
+        tk.Label(empty, text=empty_text, bg=BG, fg=MUTED, font=_font(self.font_size)).pack()
+        tk.Label(
+            empty, text="在下面输入一条，回车添加", bg=BG, fg=MUTED,
+            font=_font(max(8, self.font_size - 1)),
+        ).pack(pady=(4, 0))
+        self._list_empty_frame = empty
+        self._row_widgets = {}
+        self._row_actions = {}
+        self._row_items = {}
+        self._check_vars = []
+        self._row_by_todo_id = {}
+        for row in self._row_pool:
+            row.clear()
 
     def _measure_row_height(self):
         try:
@@ -86,53 +111,86 @@ class ListMixin:
 
         row_height = self._measure_row_height()
         subtask_height = self._measure_subtask_height()
-        items = []
-        offset = 0
-        for todo in todos:
-            items.append({"kind": "todo", "todo": todo, "height": row_height, "offset": offset})
-            offset += row_height
-            if self._subtask_parent == todo["id"]:
-                items.append({
-                    "kind": "subtask", "todo": todo, "height": subtask_height, "offset": offset,
-                })
-                offset += subtask_height
-        self._list_items = items
-        self._list_total = offset
+        layout_signature = (
+            tuple(todo["id"] for todo in todos), self._subtask_parent,
+            row_height, subtask_height, bool(self.compact), int(self.font_size),
+        )
+        if layout_signature == getattr(self, "_layout_signature", None) and self._list_items:
+            by_id = {todo["id"]: todo for todo in todos}
+            for item in self._list_items:
+                item["todo"] = by_id[item["todo"]["id"]]
+        else:
+            items = []
+            offset = 0
+            for todo in todos:
+                items.append({"kind": "todo", "todo": todo, "height": row_height, "offset": offset})
+                offset += row_height
+                if self._subtask_parent == todo["id"]:
+                    items.append({
+                        "kind": "subtask", "todo": todo, "height": subtask_height, "offset": offset,
+                    })
+                    offset += subtask_height
+            self._list_items = items
+            self._list_offsets = [item["offset"] for item in items]
+            self._list_total = offset
+            self._layout_signature = layout_signature
         self._list_row_height = row_height
 
-        canvas = tk.Canvas(self.body, bg=BG, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(self.body, orient="vertical", command=canvas.yview)
-        rows = tk.Frame(canvas, bg=BG)
-        rows.configure(height=max(1, offset), width=1)
-        rows.pack_propagate(False)
-        canvas_window = canvas.create_window((0, 0), window=rows, anchor="nw")
-        self._canvas_window = canvas_window
-        canvas.configure(yscrollcommand=lambda first, last: self._on_list_yscroll(first, last))
-        canvas.bind("<Configure>", self._on_list_configure)
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        canvas.bind("<MouseWheel>", self._on_wheel)
-        canvas.configure(scrollregion=(0, 0, 1, max(1, offset)))
-        scrollbar.state(["!disabled"] if offset > 1 else ["disabled"])
-        self.scrollbar = scrollbar
-        self.canvas = canvas
-        self.rows = rows
+        reuse = bool(
+            getattr(self, "canvas", None) is not None
+            and self.canvas.winfo_exists()
+            and self.canvas.master is self.body
+        )
+        if reuse:
+            if self._list_empty_frame is not None:
+                try:
+                    self._list_empty_frame.destroy()
+                except Exception:
+                    pass
+                self._list_empty_frame = None
+            self.scrollbar.pack(side="right", fill="y")
+            self.canvas.pack(side="left", fill="both", expand=True)
+            canvas = self.canvas
+            scrollbar = self.scrollbar
+            rows = self.rows
+        else:
+            canvas = tk.Canvas(self.body, bg=BG, highlightthickness=0, bd=0)
+            scrollbar = ttk.Scrollbar(self.body, orient="vertical", command=canvas.yview)
+            rows = tk.Frame(canvas, bg=BG)
+            rows.pack_propagate(False)
+            canvas_window = canvas.create_window((0, 0), window=rows, anchor="nw")
+            self._canvas_window = canvas_window
+            canvas.configure(yscrollcommand=lambda first, last: self._on_list_yscroll(first, last))
+            canvas.bind("<Configure>", self._on_list_configure)
+            scrollbar.pack(side="right", fill="y")
+            canvas.pack(side="left", fill="both", expand=True)
+            canvas.bind("<MouseWheel>", self._on_wheel)
+            self.scrollbar = scrollbar
+            self.canvas = canvas
+            self.rows = rows
+            self._row_pool = []
+            self._row_by_todo_id = {}
+            self._row_widgets = {}
+            self._row_actions = {}
+            self._row_items = {}
+            self._subtask_item = None
+            self._check_vars = []
+            self._subtask_widget = None
+            self._subtask_frame = None
+            self._layout_signature = None
+            self._row_by_todo_id = {}
+
+        rows.configure(height=max(1, self._list_total), width=max(1, canvas.winfo_width()))
+        canvas.configure(scrollregion=(0, 0, max(1, canvas.winfo_width()), max(1, self._list_total)))
+        scrollbar.state(["!disabled"] if self._list_total > 1 else ["disabled"])
         if self._list_update_id is not None:
             try:
                 self.root.after_cancel(self._list_update_id)
             except Exception:
                 pass
             self._list_update_id = None
-        self._row_pool = []
-        self._row_widgets = {}
-        self._row_actions = {}
-        self._row_items = {}
-        self._subtask_item = None
         self._list_signature = None
-        self._check_vars = []
-        self._subtask_widget = None
-        self._subtask_frame = None
-        self._update_visible_rows()
+        self._update_visible_rows(force=True)
 
     def _on_list_configure(self, event):
         try:
@@ -209,7 +267,7 @@ class ListMixin:
         self._subtask_frame = frame
         self._subtask_entry = entry
 
-    def _update_visible_rows(self):
+    def _update_visible_rows(self, force=False):
         if self._list_updating:
             return
         if not hasattr(self, "canvas") or not self._list_items:
@@ -227,39 +285,84 @@ class ListMixin:
         buffer = 4 * max(1, getattr(self, "_list_row_height", 30))
         first_y = max(0, top - buffer)
         last_y = top + view + buffer
-        visible = [
-            item for item in self._list_items
-            if item["offset"] + item["height"] >= first_y and item["offset"] <= last_y
-        ]
+        if self._list_offsets and len(self._list_offsets) == len(self._list_items):
+            start = bisect.bisect_left(self._list_offsets, first_y)
+            if start > 0 and (
+                self._list_items[start - 1]["offset"] + self._list_items[start - 1]["height"]
+                >= first_y
+            ):
+                start -= 1
+            end = bisect.bisect_right(self._list_offsets, last_y)
+            visible = self._list_items[start:end]
+        else:
+            visible = [
+                item for item in self._list_items
+                if item["offset"] + item["height"] >= first_y and item["offset"] <= last_y
+            ]
         signature = tuple((item["kind"], item["todo"]["id"]) for item in visible)
-        if signature == self._list_signature:
+        if not force and signature == self._list_signature:
             return
         self._list_updating = True
         try:
-            pool_index = 0
             self._row_widgets = {}
             self._row_actions = {}
             self._row_items = {}
             self._check_vars = []
             subtask_item = None
+            assigned = set()
+            current = {}
+            visible_ids = {
+                item["todo"]["id"] for item in visible if item["kind"] == "todo"
+            }
             for item in visible:
                 if item["kind"] == "subtask":
                     subtask_item = item
                     continue
-                while len(self._row_pool) <= pool_index:
-                    self._row_pool.append(_TaskRow(self, self.rows))
-                row = self._row_pool[pool_index]
                 todo = item["todo"]
-                selected = todo["id"] == getattr(self, "_selected_todo_id", None)
+                todo_id = todo["id"]
+                row = self._row_by_todo_id.get(todo_id)
+                if row is not None and getattr(row, "_needs_rebuild", False):
+                    try:
+                        row.card.destroy()
+                    except Exception:
+                        pass
+                    self._row_pool = [candidate for candidate in self._row_pool if candidate is not row]
+                    row = None
+                if row is None:
+                    protected = {
+                        candidate for candidate_id, candidate in self._row_by_todo_id.items()
+                        if candidate_id in visible_ids and candidate_id != todo_id
+                    }
+                    row = next(
+                        (candidate for candidate in self._row_pool
+                         if candidate not in assigned
+                         and candidate not in protected
+                         and not getattr(candidate, "_needs_rebuild", False)),
+                        None,
+                    )
+                if row is None:
+                    row = _TaskRow(self, self.rows)
+                    self._row_pool.append(row)
+                if row not in self._row_pool:
+                    self._row_pool.append(row)
+                selected = todo_id == getattr(self, "_selected_todo_id", None)
                 row.update(todo, compact=self.compact, font_size=self.font_size, selected=selected)
                 self._place_card(row.card, item, width)
-                self._row_widgets[todo["id"]] = row.card
-                self._row_actions[todo["id"]] = row.actions
-                self._row_items[todo["id"]] = item
+                assigned.add(row)
+                current[todo_id] = row
+                self._row_widgets[todo_id] = row.card
+                self._row_actions[todo_id] = row.actions
+                self._row_items[todo_id] = item
                 self._check_vars.append(row.variable)
-                pool_index += 1
-            for row in self._row_pool[pool_index:]:
-                row.card.place_forget()
+            for row in self._row_pool:
+                if row not in assigned:
+                    row.card.place_forget()
+                    row.clear()
+            self._row_by_todo_id = current
+            ordered_rows = [current[item["todo"]["id"]] for item in visible
+                            if item["kind"] == "todo" and item["todo"]["id"] in current]
+            ordered_rows.extend(row for row in self._row_pool if row not in assigned)
+            self._row_pool = ordered_rows
 
             self._subtask_item = subtask_item
             if self._subtask_parent is not None:

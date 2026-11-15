@@ -656,6 +656,41 @@ class MatchOperatorTests(unittest.TestCase):
         self.assertFalse(self.match(self.done_high, "foo:bar"))
 
 
+class FilterSummaryTests(unittest.TestCase):
+    def test_summary_matches_apply_filter_for_every_key(self):
+        today = date(2026, 11, 15)
+        now = datetime(2026, 11, 15, 12, 0).astimezone()
+        todos = [
+            {"id": "open-today", "text": "今天", "done": False,
+             "due_at": "2026-11-15T18:00:00+08:00"},
+            {"id": "overdue", "text": "逾期", "done": False,
+             "due_at": "2026-11-14T09:00:00+08:00"},
+            {"id": "done", "text": "完成", "done": True,
+             "due_at": "2026-11-15T09:00:00+08:00"},
+            {"id": "week", "text": "本周", "done": False,
+             "due_at": "2026-11-20T09:00:00+08:00"},
+            {"id": "nodate", "text": "无日期", "done": False},
+            {"id": "bad", "text": "坏日期", "done": False, "due_at": "not-a-date"},
+            {"id": "naive", "text": "无时区", "done": False,
+             "due_at": "2026-11-15T10:00:00"},
+            {"id": "repeat", "text": "重复", "done": False,
+             "repeat": {"type": "daily"}, "repeat_base": "2026-11-15T09:00:00+08:00"},
+            {"id": "repeat-done", "text": "重复完成", "done": True,
+             "completed_at": "2026-11-15T10:00:00+08:00",
+             "repeat": {"type": "daily"}, "repeat_base": "2026-11-15T09:00:00+08:00"},
+        ]
+
+        summary = store.summarize_filters(todos, today, now)
+
+        for key in ("today", "overdue", "all", "week7", "nodate", "done"):
+            self.assertEqual(
+                summary[key], len(store.apply_filter(todos, key, today, now)), key
+            )
+        self.assertEqual(summary["all"], len(todos))
+        self.assertEqual(summary["overdue_sub"], summary["overdue"])
+        self.assertEqual(summary["due_today_sub"], 3)
+
+
 class CompletionStatsTests(unittest.TestCase):
     def stats(self, todos, today=date(2026, 11, 11)):
         return store.completion_stats(todos, today)

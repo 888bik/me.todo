@@ -12,6 +12,8 @@ from sticky_window_theme import *
 from sticky_window_theme import register_palette_module
 from sticky_window_utils import *
 
+import sticky_window_theme as _theme
+
 tk = None
 ttk = None
 messagebox = None
@@ -25,6 +27,9 @@ class _TaskRow:
     def __init__(self, window, parent):
         self.window = window
         self.todo = None
+        self._needs_rebuild = False
+        self._signature = None
+        self._selected = False
         self.card = tk.Frame(
             parent, bg=CARD, highlightbackground=BORDER, highlightthickness=1, takefocus=1,
         )
@@ -155,7 +160,24 @@ class _TaskRow:
         self._date_cache = (due_text, color, remind_text)
         return self._date_cache
 
+    def _signature_for(self, todo, compact, font_size):
+        counts = self.window._child_counts.get(todo.get("id"), (0, 0))
+        return (
+            todo.get("id"), todo.get("text"), bool(todo.get("done")),
+            int(todo.get("priority") or 0), bool(todo.get("pinned")),
+            tuple(todo.get("tags") or []), todo.get("note") or "",
+            todo.get("due_at"), todo.get("remind_at"), repr(todo.get("repeat")),
+            todo.get("parent_id"), counts, bool(compact), int(font_size),
+            getattr(_theme, "_palette_version", 0),
+            datetime.now().astimezone().replace(second=0, microsecond=0),
+        )
+
     def update(self, todo, compact=False, font_size=10, selected=False):
+        signature = self._signature_for(todo, compact, font_size)
+        if signature == self._signature:
+            self.todo = dict(todo)
+            self.set_selected(selected)
+            return
         self.todo = dict(todo)
         self.variable.set(bool(todo.get("done")))
         font_size = max(8, int(font_size) - (1 if compact else 0))
@@ -216,14 +238,29 @@ class _TaskRow:
         else:
             self.plus.pack(side="right")
         self.actions.pack_forget()
-        self.card.configure(
-            highlightbackground=ACCENT if selected else BORDER,
-            highlightthickness=2 if selected else 1,
-        )
+        self.set_selected(selected)
+        self._signature = signature
 
-
+    def clear(self):
+        """Blank a pooled row that scrolled out of the visible window."""
+        self.todo = None
+        self._signature = None
+        self.variable.set(False)
+        self.title.configure(text="")
+        for label in (
+            self.tags_label, self.note_label, self.due_label, self.remind_label,
+            self.progress_label, self.pill,
+        ):
+            label.configure(text="")
+            label.pack_forget()
+        self.actions.pack_forget()
+        self.set_selected(False)
 
     def set_selected(self, selected):
+        selected = bool(selected)
+        if self._selected == selected:
+            return
+        self._selected = selected
         self.card.configure(
             highlightbackground=ACCENT if selected else BORDER,
             highlightthickness=2 if selected else 1,

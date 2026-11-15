@@ -597,6 +597,35 @@ def apply_filter(todos, filter_key, today=None, now=None):
     return result
 
 
+def summarize_filters(todos, today=None, now=None):
+    """Count every nav filter in one pass, preserving apply_filter semantics."""
+    today = today or date.today()
+    now = now or datetime.now().astimezone()
+    counts = {
+        "today": 0, "overdue": 0, "all": len(todos), "week7": 0,
+        "nodate": 0, "done": 0, "overdue_sub": 0, "due_today_sub": 0,
+    }
+    for todo in todos:
+        due = effective_due_datetime(todo)
+        done = bool(todo.get("done"))
+        if (due is not None and due.date() == today) or (
+            today in occurrences(todo, today, today)
+        ):
+            counts["today"] += 1
+        if not done and due is not None and due < now:
+            counts["overdue"] += 1
+            counts["overdue_sub"] += 1
+        if not done and due is not None and today <= due.date() <= today + timedelta(days=7):
+            counts["week7"] += 1
+        if effective_due(todo) is None:
+            counts["nodate"] += 1
+        if done:
+            counts["done"] += 1
+        if due is not None and due.date() == today:
+            counts["due_today_sub"] += 1
+    return counts
+
+
 def completion_stats(todos, today=None):
     """Counts by completion day; only what is still in the list is counted."""
     today = today or date.today()

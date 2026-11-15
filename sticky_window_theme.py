@@ -45,6 +45,7 @@ _DARK_PALETTE = {
 _PALETTE_KEYS = tuple(_LIGHT_PALETTE)
 _current_appearance = {}
 _current_theme = "light"
+_palette_version = 0
 
 
 def _color(value, fallback, backdrop):
@@ -75,6 +76,7 @@ def _set_palette(appearance=None, theme="light"):
     global BG, CARD, BORDER, HOVER, TEXT, MUTED, ACCENT, ACCENT_DARK
     global CLOCK, DEADLINE_FG, DANGER, TODAY_BG, ACCENT_FILL, ACCENT_TEXT
     global _current_appearance, _current_theme
+    global _palette_version
 
     _current_appearance = dict(appearance or {})
     _current_theme = "dark" if str(theme).lower() == "dark" else "light"
@@ -107,6 +109,7 @@ def _set_palette(appearance=None, theme="light"):
         globals()[key] = value
     for target in _palette_targets:
         target.update(base)
+    _palette_version += 1
 
 
 def _recolor_widget_tree(widget, color_map):

@@ -28,6 +28,10 @@ class NavMixin:
         self._nav_filter_frames = {}
         self.nav_counts = {}
         self._nav_today_sub = None
+        self._nav_stats = {
+            "today": 0, "overdue": 0, "all": 0, "week7": 0,
+            "nodate": 0, "done": 0, "overdue_sub": 0, "due_today_sub": 0,
+        }
         for key, label in NAV_FILTERS:
             item = tk.Frame(self.nav, bg=BG, cursor="hand2")
             item.pack(fill="x", padx=(10, 8), pady=1)
@@ -133,14 +137,9 @@ class NavMixin:
                 font=_font(small, bold=active),
             )
         if self._nav_today_sub is not None:
-            todos = self.controller.list()
-            overdue = len(store.apply_filter(todos, "overdue"))
-            today = date.today()
-            due_today = sum(
-                1 for todo in todos
-                if store.effective_due_datetime(todo) is not None
-                and store.effective_due_datetime(todo).date() == today
-            )
+            stats = getattr(self, "_nav_stats", {})
+            overdue = stats.get("overdue", 0)
+            due_today = stats.get("due_today_sub", 0)
             self._nav_today_sub.configure(
                 text="逾期 %d · 今日到期 %d" % (overdue, due_today),
                 fg=DANGER if overdue else MUTED,
@@ -148,10 +147,12 @@ class NavMixin:
         self._resize_nav()
 
     def _update_nav_counts(self, todos):
+        stats = store.summarize_filters(todos)
+        self._nav_stats = stats
         for key in ("today", "overdue", "all", "week7", "nodate", "done"):
             count = self.nav_counts.get(key)
             if count is not None:
-                total = len(store.apply_filter(todos, key))
+                total = stats[key]
                 count.configure(
                     text=str(total),
                     fg=DANGER if key == "overdue" and total else MUTED,

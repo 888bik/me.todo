@@ -78,6 +78,11 @@ class ActionsMixin:
         if self._editing_id is not None:
             return
         self._editing_id = todo["id"]
+        for row in self._row_pool:
+            if row.card is middle.master:
+                row._needs_rebuild = True
+                self._editing_row = row
+                break
         # Replace the whole text block (title + deadline) with the editor; the
         # row is rebuilt from data on save/cancel, so the deadline returns.
         for child in middle.winfo_children():
@@ -98,6 +103,7 @@ class ActionsMixin:
         entry = self._edit_entry
         self._editing_id = None
         self._edit_entry = None
+        self._editing_row = None
         if entry is not None:
             try:
                 entry.destroy()

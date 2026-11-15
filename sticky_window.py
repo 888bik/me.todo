@@ -37,6 +37,16 @@ register_palette_module(globals())
 _state = {"thread": None, "queue": None, "window": None, "visible": False}
 _lock = threading.Lock()
 
+
+def _enqueue(command):
+    commands = _state.get("queue")
+    if commands is None:
+        return
+    commands.put(command)
+    window = _state.get("window")
+    if window is not None:
+        window._wake_command()
+
 _WIDGET_MODULES = ()
 
 
@@ -89,22 +99,19 @@ def is_visible():
 
 def show(controller, settings, focus=False):
     _ensure(controller, settings)
-    _state["queue"].put(("show", bool(focus)))
+    _enqueue(("show", bool(focus)))
 
 
 def hide():
-    if _state["queue"] is not None:
-        _state["queue"].put(("hide",))
+    _enqueue(("hide",))
 
 
 def refresh():
-    if _state["queue"] is not None:
-        _state["queue"].put(("refresh",))
+    _enqueue(("refresh",))
 
 
 def apply_settings(settings):
-    if _state["queue"] is not None:
-        _state["queue"].put(("settings", dict(settings or {})))
+    _enqueue(("settings", dict(settings or {})))
 
 
 def apply_appearance(appearance=None, theme=None):
@@ -114,41 +121,36 @@ def apply_appearance(appearance=None, theme=None):
     thread = _state.get("thread")
     commands = _state.get("queue")
     if commands is not None and thread is not None and thread.is_alive():
-        commands.put(("appearance", appearance, theme))
+        _enqueue(("appearance", appearance, theme))
     else:
         _set_palette(appearance, theme)
 
 
 def set_locked(locked):
-    if _state["queue"] is not None:
-        _state["queue"].put(("locked", bool(locked)))
+    _enqueue(("locked", bool(locked)))
 
 
 def set_compact(compact):
-    if _state["queue"] is not None:
-        _state["queue"].put(("compact", bool(compact)))
+    _enqueue(("compact", bool(compact)))
 
 
 def show_stats():
-    if _state["queue"] is not None:
-        _state["queue"].put(("stats",))
+    _enqueue(("stats",))
 
 
 def export_todos():
-    if _state["queue"] is not None:
-        _state["queue"].put(("export",))
+    _enqueue(("export",))
 
 
 def import_todos():
-    if _state["queue"] is not None:
-        _state["queue"].put(("import",))
+    _enqueue(("import",))
 
 
 def _ensure(controller, settings):
     with _lock:
         thread = _state["thread"]
         if thread is not None and thread.is_alive():
-            _state["queue"].put(("settings", dict(settings or {})))
+            _enqueue(("settings", dict(settings or {})))
             return
         commands = queue.Queue()
         _state["queue"] = commands
@@ -165,7 +167,8 @@ def _run(commands, controller, settings):
     window = _StickyWindow(root, commands, controller, settings, dpi_factor=dpi_factor)
     _state["window"] = window
     _state["visible"] = False
-    root.after(100, window.pump)
+    window._wake_command()
+    root.after(1000, window.pump)
     root.mainloop()
 
 
@@ -205,6 +208,8 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self._reminder_picker = None
         self._stats_dialog = None
         self._editing_id = None
+        self._editing_row = None
+        self._pump_after_id = None
         self._edit_entry = None
         self._refresh_pending = False
         self._search_job = None
@@ -225,13 +230,21 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self._list_yview = 0.0
         self._list_total = 0
         self._list_items = []
+        self._list_offsets = []
+        self._layout_signature = None
         self._row_pool = []
+        self._row_by_todo_id = {}
         self._row_height_cache = {}
         self._row_items = {}
         self._subtask_item = None
         self._list_update_id = None
         self._list_updating = False
         self._list_signature = None
+        self._list_empty_frame = None
+        self.canvas = None
+        self.scrollbar = None
+        self.rows = None
+        self._canvas_window = None
         self._subtask_widget = None
         self._subtask_frame = None
         self.locked = bool(self.config.get("locked"))
@@ -245,6 +258,7 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self.root.withdraw()
         self.root.update_idletasks()
         _hide_from_taskbar(self.root)
+        self.root.bind("<<TodoCommand>>", self._on_command_event, add="+")
         self.root.title("待办")
         self.root.configure(bg=BG)
         # Normal windows participate in the regular Windows z-order. Only a
@@ -635,17 +649,53 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self._stats_dialog = _StatsDialog(self)
 
     def pump(self):
+        current_pump = getattr(self, "_pump_after_id", None)
+        if current_pump is not None:
+            try:
+                self.root.after_cancel(current_pump)
+            except Exception:
+                pass
+            self._pump_after_id = None
+        commands = []
         try:
             while True:
-                self._dispatch(self.commands.get_nowait())
+                commands.append(self.commands.get_nowait())
         except queue.Empty:
             pass
+        pending_refresh = None
+        for command in commands:
+            if command[0] == "refresh":
+                pending_refresh = command
+                continue
+            if pending_refresh is not None:
+                self._dispatch(pending_refresh)
+                pending_refresh = None
+            self._dispatch(command)
+        if pending_refresh is not None:
+            self._dispatch(pending_refresh)
         try:
             hidden = str(self.root.state()) in ("withdrawn", "iconic")
         except Exception:
             hidden = False
         self._check_lock_hook(hidden=hidden)
-        self.root.after(1000 if hidden else 100, self.pump)
+        self._schedule_pump()
+
+    def _schedule_pump(self):
+        if getattr(self, "_pump_after_id", None) is not None:
+            return
+        try:
+            self._pump_after_id = self.root.after(1000, self.pump)
+        except Exception:
+            self._pump_after_id = None
+
+    def _wake_command(self):
+        try:
+            self.root.event_generate("<<TodoCommand>>", when="tail")
+        except Exception:
+            pass
+
+    def _on_command_event(self, event):
+        self.pump()
 
     def _dispatch(self, command):
         name = command[0]
@@ -712,8 +762,16 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
                     previous_yview = self.canvas.yview()[0]
             except Exception:
                 previous_yview = None
-        for child in self.body.winfo_children():
-            child.destroy()
+        same_list = bool(
+            self.view in ("list", "today")
+            and getattr(self, "canvas", None) is not None
+            and self.canvas.winfo_exists()
+            and self.canvas.master is self.body
+        )
+        if not same_list:
+            for child in self.body.winfo_children():
+                child.destroy()
+            self._list_empty_frame = None
         todos = self.controller.list()
         self._update_nav_counts(todos)
         if self.search.strip():
@@ -749,6 +807,7 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
                 pass
         if self.view not in ("list", "today"):
             self._row_pool = []
+            self._row_by_todo_id = {}
             self._row_widgets = {}
             self._row_actions = {}
 

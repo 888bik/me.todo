@@ -76,12 +76,17 @@ class App:
         self.plugin = None
         self.reminders_started = False
         self._last_removed = []
+        self._todos_version = 0
+        self._list_cache_version = -1
+        self._list_cache_order = []
 
     # -- loading ---------------------------------------------------------
     def load(self, data_dir):
         self.data_dir = str(data_dir)
         self.config = store.load_config(self.data_dir)
         self.todos = store.load_todos(self.data_dir)
+        self._todos_version += 1
+        self._list_cache_version = -1
 
     def get_config(self):
         with self.lock:
@@ -124,7 +129,14 @@ class App:
         """Reload the on-disk list after an import changed todos.json."""
         with self.lock:
             self.todos = store.load_todos(self.data_dir)
+            self._todos_version += 1
+            self._list_cache_version = -1
         return [dict(todo) for todo in self.todos]
+
+    def _save_todos_locked(self):
+        store.save_todos(self.data_dir, self.todos)
+        self._todos_version += 1
+        self._list_cache_version = -1
 
     def list(self):
         """Top-level sorted; each parent is immediately followed by its children.
@@ -133,46 +145,50 @@ class App:
         sort without the pinned flag. Files keep insertion order.
         """
         with self.lock:
+            if self._list_cache_version == self._todos_version:
+                return [dict(todo) for todo in self._list_cache_order]
             todos = [dict(todo) for todo in self.todos]
 
-        def key(todo):
-            due = store.effective_due_datetime(todo)
-            stamp = due.timestamp() if due is not None else float("inf")
-            return (
-                bool(todo.get("done")),
-                not bool(todo.get("pinned")),
-                -int(todo.get("priority") or 0),
-                stamp,
-                str(todo.get("created_at") or ""),
-            )
+            def key(todo):
+                due = store.effective_due_datetime(todo)
+                stamp = due.timestamp() if due is not None else float("inf")
+                return (
+                    bool(todo.get("done")),
+                    not bool(todo.get("pinned")),
+                    -int(todo.get("priority") or 0),
+                    stamp,
+                    str(todo.get("created_at") or ""),
+                )
 
-        def child_key(todo):
-            due = store.effective_due_datetime(todo)
-            stamp = due.timestamp() if due is not None else float("inf")
-            return (
-                bool(todo.get("done")),
-                -int(todo.get("priority") or 0),
-                stamp,
-                str(todo.get("created_at") or ""),
-            )
+            def child_key(todo):
+                due = store.effective_due_datetime(todo)
+                stamp = due.timestamp() if due is not None else float("inf")
+                return (
+                    bool(todo.get("done")),
+                    -int(todo.get("priority") or 0),
+                    stamp,
+                    str(todo.get("created_at") or ""),
+                )
 
-        ids = {todo["id"] for todo in todos}
-        children = {}
-        top = []
-        for todo in todos:
-            parent = todo.get("parent_id")
-            if parent and parent in ids:
-                children.setdefault(parent, []).append(todo)
-            else:
-                top.append(todo)
+            ids = {todo["id"] for todo in todos}
+            children = {}
+            top = []
+            for todo in todos:
+                parent = todo.get("parent_id")
+                if parent and parent in ids:
+                    children.setdefault(parent, []).append(todo)
+                else:
+                    top.append(todo)
 
-        top.sort(key=key)
-        ordered = []
-        for todo in top:
-            ordered.append(todo)
-            for child in sorted(children.get(todo["id"], []), key=child_key):
-                ordered.append(child)
-        return ordered
+            top.sort(key=key)
+            ordered = []
+            for todo in top:
+                ordered.append(todo)
+                for child in sorted(children.get(todo["id"], []), key=child_key):
+                    ordered.append(child)
+            self._list_cache_order = ordered
+            self._list_cache_version = self._todos_version
+            return [dict(todo) for todo in ordered]
 
     def add(self, text, parent_id=None, remind_at=None, due_at=None, priority=None, tags=None, repeat=None):
         raw = str(text).strip()
@@ -207,7 +223,7 @@ class App:
             if repeat:
                 todo["repeat_base"] = remind_at
             self.todos.append(todo)
-            store.save_todos(self.data_dir, self.todos)
+            self._save_todos_locked()
         return dict(todo)
 
     def toggle(self, todo_id):
@@ -240,7 +256,7 @@ class App:
                     todo["done"] = False
                     todo["completed_at"] = None
 
-            store.save_todos(self.data_dir, self.todos)
+            self._save_todos_locked()
             return new_state
         return None
 
@@ -286,7 +302,7 @@ class App:
                 return False
             self.todos = [todo for todo in self.todos if todo["id"] not in targets]
             self._last_removed = removed
-            store.save_todos(self.data_dir, self.todos)
+            self._save_todos_locked()
             return True
 
     def clear_done(self):
@@ -302,7 +318,7 @@ class App:
             removed = [(index, todo) for index, todo in enumerate(self.todos) if todo["id"] in targets]
             self.todos = [todo for todo in self.todos if todo["id"] not in targets]
             self._last_removed = removed
-            store.save_todos(self.data_dir, self.todos)
+            self._save_todos_locked()
             return len(removed)
 
     def undo_delete(self):
@@ -313,7 +329,7 @@ class App:
             for index, todo in sorted(self._last_removed, key=lambda pair: pair[0]):
                 self.todos.insert(min(index, len(self.todos)), dict(todo))
             self._last_removed = []
-            store.save_todos(self.data_dir, self.todos)
+            self._save_todos_locked()
             return True
 
     def edit_text(self, todo_id, text):
@@ -324,7 +340,7 @@ class App:
             for todo in self.todos:
                 if todo["id"] == todo_id:
                     todo["text"] = text
-                    store.save_todos(self.data_dir, self.todos)
+                    self._save_todos_locked()
                     return True
         return False
 
@@ -337,7 +353,7 @@ class App:
                     todo["repeat"] = repeat
                     todo["repeat_base"] = iso if repeat else None
                     todo["reminded"] = False
-                    store.save_todos(self.data_dir, self.todos)
+                    self._save_todos_locked()
                     return True
         return False
 
@@ -346,7 +362,7 @@ class App:
             for todo in self.todos:
                 if todo["id"] == todo_id:
                     todo["due_at"] = iso
-                    store.save_todos(self.data_dir, self.todos)
+                    self._save_todos_locked()
                     return True
         return False
 
@@ -357,7 +373,7 @@ class App:
                 if todo["id"] == todo_id:
                     todo["remind_at"] = iso
                     todo["reminded"] = False
-                    store.save_todos(self.data_dir, self.todos)
+                    self._save_todos_locked()
                     return True
         return False
 
@@ -373,7 +389,7 @@ class App:
                         todo["tags"] = store.normalize_tags(tags)
                     if note is not None:
                         todo["note"] = str(note)
-                    store.save_todos(self.data_dir, self.todos)
+                    self._save_todos_locked()
                     return True
         return False
 
@@ -392,7 +408,7 @@ class App:
                     todo["repeat_base"] = iso
                     todo["reminded"] = False
                     if save:
-                        store.save_todos(self.data_dir, self.todos)
+                        self._save_todos_locked()
                     return True
         return False
 
@@ -430,7 +446,7 @@ class App:
                 if todo["id"] == todo_id and not todo["reminded"]:
                     todo["reminded"] = True
                     if save:
-                        store.save_todos(self.data_dir, self.todos)
+                        self._save_todos_locked()
                     return True
         return False
 
@@ -561,7 +577,7 @@ def fire_reminders(app_instance, plugin, now=None):
             fired.append(todo["id"])
     if fired:
         with app_instance.lock:
-            store.save_todos(app_instance.data_dir, app_instance.todos)
+            app_instance._save_todos_locked()
         sticky_window.refresh()
     return fired
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.5.2
+- Task rows now carry a full content signature (task fields, child counts, compact/font, palette version, minute); unchanged rows skip all Tk configure/pack work while still refreshing `self.todo` for callbacks. Selection is a separate `set_selected` update.
+- The visible row pool is mapped by stable task id (`_row_by_todo_id`), so a still-visible task keeps its existing `_TaskRow` across scrolls; only entering tasks take a free row.
+- Layout structure (task id order, subtask slot, row heights, compact/font) is cached independently: unchanged layouts reuse `_list_items`/`_list_offsets`/`_list_total` while todo references are refreshed for the row content cache.
+- Navigation counts are computed in one `store.summarize_filters()` pass; `_update_nav()` uses the cached stats and no longer calls `controller.list()` again.
+- `_render()` still calls `controller.list()` once; App.list's dict-copy semantics are unchanged.
+- `bench.py` now covers 500/1000/2000/5000/10000 with 7 rounds, medians/min/max, unchanged and one-change refresh, nav, layout, scroll, month and temp-dir save timings.
+- Same-machine Windows medians (3.5.1 → 3.5.2, seconds): 2000 refresh 0.023→0.012, search 0.032→0.024, nav 0.011→0.007; 10000 refresh 0.078→0.041, search 0.123→0.084, save 0.135→0.139.
+
+## 3.5.1
+- List/today refresh reuses the existing Canvas, scrollbar, rows Frame and `_TaskRow` pool instead of destroying the whole body and rebuilding them; only changed visible rows call `row.update()` and the scrollregion/offsets are recomputed when data changes.
+- Command handling is event-driven: enqueueing wakes Tk with `<<TodoCommand>>`, while a 1000ms safety poll still drains the queue and runs the lock-hook watchdog. Consecutive `refresh` commands in one drain collapse to a single dispatch.
+- `App.list()` caches its sorted order behind a mutation version; every save/load/import bumps the version and returns fresh dict copies as before.
+- `_update_visible_rows` uses binary search over cached item offsets instead of scanning all items.
+- No behavior, UI, text, shortcuts, default settings, data format, save path or reminder cadence changed.
+- Bench (Windows, same machine, two-run medians, seconds): 500 0.104/0.107/0.123/0.036 → 0.117/0.015/0.017/0.037; 1000 0.103/0.122/0.117/0.039 → 0.110/0.018/0.023/0.040; 2000 0.120/0.120/0.123/0.045 → 0.121/0.025/0.034/0.043.
+
 ## 3.5.0
 - Split the 3430-line `sticky_window.py` into a facade/core plus flat sibling modules, with no behavior, UI, data-format or timing changes:
   - `sticky_window_theme.py`: palette colors, priority colors/labels, font family, light/dark palettes, `_color`, `_palette_snapshot`, `_set_palette`, `_recolor_widget_tree`, `_font`.

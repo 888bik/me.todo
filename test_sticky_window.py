@@ -244,14 +244,14 @@ class HookWatchdogTests(unittest.TestCase):
         self.assertIn("钩子不可用", window.status.configure.call_args.kwargs["text"])
         self.assertIn("Ctrl+Alt+U", window.status.configure.call_args.kwargs["text"])
 
-    def test_pump_uses_one_hundred_ms_visible_and_one_thousand_ms_hidden(self):
+    def test_pump_uses_one_second_safety_polling(self):
         window = self.make_window()
         window.locked = False
         with mock.patch("sticky_window.os.name", "nt"), \
                 mock.patch("sticky_window.time.monotonic", return_value=1.0):
             window.root.state.return_value = "normal"
             window.pump()
-            window.root.after.assert_called_with(100, window.pump)
+            window.root.after.assert_called_with(1000, window.pump)
 
             window.root.after.reset_mock()
             window.root.state.return_value = "withdrawn"
@@ -925,6 +925,106 @@ class V3WindowTests(unittest.TestCase):
             window._on_list_yscroll("0.2", "0.8")
         update.assert_not_called()
 
+    def test_unchanged_row_skips_repeated_tk_configure(self):
+        window = self.make_window()
+        row = window._row_pool[0]
+        todo = row.todo
+        row.update(todo, compact=False, font_size=window.font_size)
+        with mock.patch.object(row.title, "configure", wraps=row.title.configure) as configure:
+            row.update(todo, compact=False, font_size=window.font_size)
+
+        configure.assert_not_called()
+
+    def test_changed_title_invalidates_the_row_cache(self):
+        window = self.make_window()
+        row = window._row_pool[0]
+        todo = dict(row.todo)
+        todo["text"] = "改过的标题"
+
+        row.update(todo, compact=False, font_size=window.font_size)
+
+        self.assertEqual(row.title.cget("text"), "改过的标题")
+
+    def test_selecting_a_row_only_updates_highlight(self):
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        row = window._row_by_todo_id["a"]
+        with mock.patch.object(row, "update") as update:
+            window._select_todo(window.controller.todos[0])
+        update.assert_not_called()
+        self.assertTrue(row._selected)
+
+    def test_render_reuses_layout_items_when_order_is_unchanged(self):
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        items = window._list_items
+        offsets = window._list_offsets
+
+        window._render()
+
+        self.assertIs(window._list_items, items)
+        self.assertIs(window._list_offsets, offsets)
+
+    def test_navigation_does_not_fetch_todos_again(self):
+        window = self.make_window()
+        with mock.patch.object(self.controller, "list", wraps=self.controller.list) as list_fn:
+            window._render()
+            self.assertEqual(list_fn.call_count, 1)
+            list_fn.reset_mock()
+            window._update_nav()
+            list_fn.assert_not_called()
+
+    def test_scrolling_keeps_stable_row_objects_for_still_visible_tasks(self):
+        self.controller.todos = [
+            {"id": "s%d" % index, "text": "任务%d" % index, "done": False,
+             "remind_at": None, "reminded": False}
+            for index in range(80)
+        ]
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        before = dict(window._row_by_todo_id)
+        window.canvas.yview_scroll(1, "units")
+        window.root.update()
+        after = window._row_by_todo_id
+
+        overlap = set(before) & set(after)
+        self.assertTrue(overlap)
+        for todo_id in overlap:
+            self.assertIs(after[todo_id], before[todo_id])
+
+    def test_render_reuses_the_same_canvas(self):
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        canvas = window.canvas
+
+        window._render()
+        self.root.update()
+
+        self.assertIs(window.canvas, canvas)
+        self.assertTrue(window.canvas.winfo_exists())
+
+    def test_consecutive_refresh_commands_dispatch_only_once(self):
+        window = self.make_window()
+        window.commands.put(("refresh",))
+        window.commands.put(("refresh",))
+        with mock.patch.object(window, "_dispatch") as dispatch:
+            window.pump()
+
+        dispatch.assert_called_once_with(("refresh",))
+
+    def test_enqueue_wakes_the_tk_event_loop(self):
+        window = self.make_window()
+        with mock.patch.dict("sticky_window._state", {"queue": window.commands, "window": window}), \
+                mock.patch.object(self.root, "event_generate") as event:
+            sticky_window.refresh()
+
+        event.assert_called_once_with("<<TodoCommand>>", when="tail")
+        self.assertEqual(window.commands.get_nowait(), ("refresh",))
+
     def test_two_thousand_rows_render_only_a_windowful(self):
         now = datetime.now().astimezone()
         self.controller.todos = [
@@ -1197,7 +1297,7 @@ class V3WindowTests(unittest.TestCase):
 
         self.assertEqual(getattr(self.controller, "reloads", 0), 1)
 
-    def test_hidden_pump_processes_show_and_restores_fast_interval(self):
+    def test_hidden_pump_processes_show_and_restores_safety_poll(self):
         window = self.make_window()
         window.root.withdraw()
         window.commands.put(("show", True))
@@ -1205,7 +1305,7 @@ class V3WindowTests(unittest.TestCase):
         with mock.patch.object(window.root, "after") as after:
             window.pump()
 
-        self.assertIn(mock.call(100, window.pump), after.call_args_list)
+        self.assertIn(mock.call(1000, window.pump), after.call_args_list)
 
     def test_lock_button_toggles_and_saves(self):
         window = self.make_window()

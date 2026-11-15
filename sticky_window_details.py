@@ -420,13 +420,15 @@ class DetailsMixin:
         self._render()
 
     def _select_todo(self, todo):
+        previous = getattr(self, "_selected_todo_id", None)
         self._open_details(todo)
-        for row in list(self._row_pool):
-            if row.todo is not None:
-                try:
-                    row.set_selected(row.todo["id"] == todo["id"])
-                except Exception:
-                    pass
+        if previous and previous != todo["id"]:
+            old_row = getattr(self, "_row_by_todo_id", {}).get(previous)
+            if old_row is not None:
+                old_row.set_selected(False)
+        row = getattr(self, "_row_by_todo_id", {}).get(todo["id"])
+        if row is not None:
+            row.set_selected(True)
 
     def _activate_row(self, row):
         self._active_row = row
