@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 ## 3.6.0
 - Subtask input supports continuous add: Tab / Ctrl+Enter create the current subtask and immediately open a fresh empty input at the same parent; empty Tab/Ctrl+Enter does nothing; Return still creates and closes; Escape still cancels.
@@ -10,11 +10,13 @@
 - Read-only rows no longer show the dead `＋截止` / `＋提醒` placeholders or hover action buttons; rows with real due/remind text still display it.
 - Lock hotkey is now a toggle: while visible and unlocked it locks, while locked it unlocks; hidden+unlocked remains a no-op. Unlock branch/notification unchanged.
 - The normal Explorer title bar is restored: the old WS_EX_TOOLWINDOW style is gone. A hidden STATIC owner window is assigned through GWLP_HWNDPARENT so the note stays out of the taskbar/Alt+Tab, and WS_MINIMIZEBOX/WS_MAXIMIZEBOX are cleared so only the normal close button remains.
-- Title-icon fix: reproduction was clicking the title-bar icon; the blank popup was traced to `_hide_from_taskbar` running twice in `_build`, creating an orphan hidden owner (and leaving the prior owner active). The owner is now created once per note, explicitly `ShowWindow(SW_HIDE)`, reused on later style refreshes, and the duplicate `_hide_from_taskbar` call was removed. System menu inspection reports 7 native items.
+- Title-icon round 3 evidence: the source tree has the round-2 fingerprints (minimum 480×360, simple list includes undated/future unfinished items), but zhao's installed package could not be independently re-confirmed. Programmatic enumeration during a title-icon click found the main `TkTopLevel` and a hidden `Static` owner with a 0×0 rect, not the reported 220×200 blank window; the main window's system menu reports 7 native items. The blank window's class/owner was therefore not captured, so this round deliberately makes **no further owner/titlebar code change**; step 1 remains blocked pending a real Spy++/EnumWindows capture from the affected machine.
+- Simple mode now closes an open details sidebar on entry (saving the selected todo ID), restores the sidebar to that same todo on exit if it still exists, and clears the saved flags. Read-only row click/double-click/actions cannot reopen it.
+- Simple-mode empty text changed from `今天没有未完成` to `没有未完成` in both branches.
 - Minimum window size is now 480×360 logical (720×540 at 150% DPI), down from 600×420 (900×630); the default geometry is unchanged. The four-edge resize limit and `size_for_view` minimums were updated together.
 - Input fonts: the composer, search, subtask and inline-edit entries now all use one named `tkfont.Font` created after Tk scaling is applied. This is the code-side mitigation for undersized IME composition text; the Windows 3K/150% IME reproduction and before/after screenshots could not be captured in this non-interactive run, so visual acceptance is still pending.
 - No existing behavior, data format, shortcut defaults, or storage path changed.
-- Bench medians (7 rounds): Windows 2000 refresh/search 0.014/0.026, 10000 0.043/0.083; an earlier Windows run showed 0.019/0.036 and 0.057/0.124 but a rerun recovered, confirming machine load rather than code. Linux (Muse): 2000 0.153/0.172, 10000 0.196/0.270, level with 3.5.2.
+- Bench medians (7 rounds): Windows 2000 refresh/search 0.013/0.023, 10000 0.038/0.083; an earlier Windows run showed 0.019/0.036 and 0.057/0.124 but a rerun recovered, confirming machine load rather than code. Linux (Muse): 2000 0.153/0.172, 10000 0.196/0.270, level with 3.5.2.
 
 ## 3.5.2
 - Task rows now carry a full content signature (task fields, child counts, compact/font, palette version, minute); unchanged rows skip all Tk configure/pack work while still refreshing `self.todo` for callbacks. Selection is a separate `set_selected` update.

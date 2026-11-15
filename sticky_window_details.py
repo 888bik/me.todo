@@ -395,7 +395,7 @@ class DetailsMixin:
         x, y = self.root.winfo_x(), self.root.winfo_y()
         self.root.geometry("%dx%d+%d+%d" % (target, int(height), x, y))
 
-    def _hide_detail_panel(self):
+    def _hide_detail_panel(self, refresh=True):
         if not self._detail_visible:
             return
         self._detail_frame.pack_forget()
@@ -417,7 +417,8 @@ class DetailsMixin:
         height = self._physical_screen_limit(height, "height")
         x, y = self.root.winfo_x(), self.root.winfo_y()
         self.root.geometry("%dx%d+%d+%d" % (width, int(height), x, y))
-        self._render()
+        if refresh:
+            self._render()
 
     def _select_todo(self, todo):
         previous = getattr(self, "_selected_todo_id", None)

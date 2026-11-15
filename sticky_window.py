@@ -252,6 +252,8 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self.simple_mode = False
         self._simple_prev_view = None
         self._simple_prev_yview = None
+        self._simple_prev_detail = False
+        self._simple_prev_detail_id = None
         self._hook = None
         self._hook_rect = None
         self._last_hook_check = 0.0
@@ -834,11 +836,15 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         if not self.simple_mode:
             self._simple_prev_view = self.view
             self._simple_prev_yview = None
+            self._simple_prev_detail = bool(self._detail_visible)
+            self._simple_prev_detail_id = self._selected_todo_id if self._simple_prev_detail else None
             if self.canvas is not None and self.canvas.winfo_exists():
                 try:
                     self._simple_prev_yview = self.canvas.yview()[0]
                 except Exception:
                     pass
+            if self._simple_prev_detail:
+                self._hide_detail_panel(refresh=False)
             self.simple_mode = True
             self.nav.pack_forget()
             self.nav_separator.pack_forget()
@@ -855,6 +861,11 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
                 before=self.search_separator,
             )
             self._render()
+            if self._simple_prev_detail and self._simple_prev_detail_id:
+                for todo in self.controller.list():
+                    if todo["id"] == self._simple_prev_detail_id:
+                        self._open_details(todo)
+                        break
             if self._simple_prev_yview is not None and self.canvas is not None:
                 try:
                     self.canvas.yview_moveto(self._simple_prev_yview)
@@ -862,6 +873,8 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
                     pass
             self._simple_prev_view = None
             self._simple_prev_yview = None
+            self._simple_prev_detail = False
+            self._simple_prev_detail_id = None
 
     def _render_simple(self):
         same_list = bool(
@@ -880,9 +893,9 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self.count.configure(text=("%d 条未完成" % open_count) if open_count else "全部完成")
         self.clear_button.pack_forget()
         if simple:
-            self._render_list(simple, empty_text="今天没有未完成")
+            self._render_list(simple, empty_text="没有未完成")
         else:
-            self._render_list([], empty_text="今天没有未完成")
+            self._render_list([], empty_text="没有未完成")
 
     def _today_todos(self, todos):
         today = date.today()

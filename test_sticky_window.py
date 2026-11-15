@@ -1081,10 +1081,16 @@ class V3WindowTests(unittest.TestCase):
         window._dispatch(("show", True))
         self.root.update()
         view = window.view
+        window._open_details(self.controller.todos[0])
+        self.root.update()
+        detail_width = window.root.winfo_width()
+        self.assertTrue(window._detail_visible)
         window.search_var.set("保留我")
         window._toggle_simple_mode()
         self.root.update()
 
+        self.assertFalse(window._detail_visible)
+        self.assertLessEqual(window.root.winfo_width(), detail_width)
         self.assertEqual(window.nav.winfo_manager(), "")
         self.assertEqual(window.search_bar.winfo_manager(), "")
         self.assertEqual(window.composer.winfo_manager(), "")
@@ -1105,14 +1111,32 @@ class V3WindowTests(unittest.TestCase):
         before = [dict(todo) for todo in self.controller.todos]
         row._toggle()
         row._double(mock.Mock(widget=row.title))
+        row._click(mock.Mock(widget=row.title))
+        row._open()
+        self.root.update()
+        self.assertFalse(window._detail_visible)
         self.assertEqual(self.controller.todos, before)
 
         window._toggle_simple_mode()
         self.root.update()
         self.assertEqual(window.view, view)
+        self.assertTrue(window._detail_visible)
+        self.assertEqual(window._selected_todo_id, "open")
         self.assertEqual(window.nav.winfo_manager(), "pack")
         self.assertEqual(window.search_bar.winfo_manager(), "pack")
         self.assertEqual(window.search_var.get(), "保留我")
+
+    def test_simple_mode_empty_text_is_not_today_specific(self):
+        self.controller.todos = []
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        window._toggle_simple_mode()
+        self.root.update()
+
+        texts = [str(label.cget("text")) for label in self.labels(window)]
+        self.assertIn("没有未完成", texts)
+        self.assertNotIn("今天没有未完成", texts)
 
     def test_lock_status_uses_configured_unlock_hotkey(self):
         window = self.make_window()
