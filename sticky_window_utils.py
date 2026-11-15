@@ -12,7 +12,7 @@ __all__ = ['VIEW_SIZES', 'VIEW_MIN_SIZES', 'VIEW_BUTTONS', 'FILTER_BUTTONS', 'NA
 
 VIEW_SIZES = {"list": (720, 520), "today": (720, 520), "week": (720, 520), "month": (720, 520)}
 
-VIEW_MIN_SIZES = {"list": (600, 420), "today": (600, 420), "week": (600, 420), "month": (600, 420)}
+VIEW_MIN_SIZES = {"list": (480, 360), "today": (480, 360), "week": (480, 360), "month": (480, 360)}
 
 VIEW_BUTTONS = (("list", "列表"), ("today", "今日"), ("week", "周"), ("month", "月"))
 
@@ -32,7 +32,7 @@ NAV_WIDTH = 160
 
 DETAIL_WIDTH = 300
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 720, 520
-MIN_WIDTH, MIN_HEIGHT = 600, 420
+MIN_WIDTH, MIN_HEIGHT = 480, 360
 
 REPEAT_OPTIONS = (("none", "不重复"), ("daily", "每天"), ("weekdays", "工作日"),
                   ("weekly", "每周"), ("monthly", "每月"))
@@ -95,14 +95,14 @@ def _log(message):
 
 
 _OWNER_WINDOWS = []
+_OWNER_BY_NOTE = {}
 
 
 def _hide_from_taskbar(root, user32=None):
     """Keep the note off the taskbar/Alt+Tab by owning it to a hidden window.
 
-    This preserves the normal Explorer title bar (unlike WS_EX_TOOLWINDOW),
-    while the hidden owner suppresses the taskbar/Alt+Tab entry.  Minimize and
-    maximize boxes are removed so only the normal close button remains.
+    The owner is created once per note and explicitly hidden; reusing it avoids
+    orphan top-level windows when the frame style is re-applied.
     """
     if os.name != "nt":
         return False
@@ -122,13 +122,19 @@ def _hide_from_taskbar(root, user32=None):
             wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
         ]
         user32.CreateWindowExW.restype = wintypes.HWND
-        owner = user32.CreateWindowExW(
-            0, "STATIC", "", 0x80000000, 0, 0, 0, 0, None, None, None, None,
-        )
-        if not owner:
-            _log("CreateWindowExW owner failed: error %s" % ctypes.get_last_error())
-            return False
-        _OWNER_WINDOWS.append(owner)
+        owner = _OWNER_BY_NOTE.get(hwnd)
+        if owner is None:
+            owner = user32.CreateWindowExW(
+                0x00000080, "STATIC", "", 0x80000000, 0, 0, 0, 0, None, None, None, None,
+            )
+            if not owner:
+                _log("CreateWindowExW owner failed: error %s" % ctypes.get_last_error())
+                return False
+            _OWNER_BY_NOTE[hwnd] = owner
+            _OWNER_WINDOWS.append(owner)
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.ShowWindow(owner, 0)  # SW_HIDE
 
         get_style = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
         set_style = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)

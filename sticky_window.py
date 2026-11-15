@@ -424,7 +424,6 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self.root.bind("<Configure>", self._on_configure)
         self._apply_lock(announce=False)
         self._render()
-        _hide_from_taskbar(self.root)
         self._apply_size()
 
     def _set_icon(self):
@@ -875,7 +874,7 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
                 child.destroy()
             self._list_empty_frame = None
         todos = self.controller.list()
-        simple = [todo for todo in self._today_todos(todos) if not todo["done"]]
+        simple = [todo for todo in todos if not todo["done"]]
         self._show_composer(False)
         open_count = len(simple)
         self.count.configure(text=("%d 条未完成" % open_count) if open_count else "全部完成")

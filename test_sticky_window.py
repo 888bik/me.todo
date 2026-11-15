@@ -14,10 +14,10 @@ class ViewGeometryTests(unittest.TestCase):
         self.assertEqual(sticky_window.size_for_view(920, 720, "list"), (920, 720))
 
     def test_switching_views_preserves_a_user_shrunk_list_window(self):
-        self.assertEqual(sticky_window.size_for_view(300, 350, "list"), (600, 420))
+        self.assertEqual(sticky_window.size_for_view(300, 350, "list"), (480, 360))
 
     def test_switching_to_week_expands_only_to_its_minimum_size(self):
-        self.assertEqual(sticky_window.size_for_view(420, 500, "week"), (600, 500))
+        self.assertEqual(sticky_window.size_for_view(420, 500, "week"), (480, 500))
 
     def test_switching_to_month_expands_both_dimensions_as_needed(self):
         self.assertEqual(sticky_window.size_for_view(800, 420, "month"), (800, 420))
@@ -32,7 +32,7 @@ class ViewGeometryTests(unittest.TestCase):
         root.update()
 
         self.assertTrue(root.wm_geometry().startswith("720x520"))
-        self.assertEqual(tuple(root.minsize()), (600, 420))
+        self.assertEqual(tuple(root.minsize()), (480, 360))
 
     def test_saved_window_narrower_than_the_minimum_is_widened(self):
         root = _tk_root()
@@ -43,7 +43,7 @@ class ViewGeometryTests(unittest.TestCase):
         window._dispatch(("show", True))
         root.update()
 
-        self.assertTrue(root.wm_geometry().startswith("600x500"))
+        self.assertTrue(root.wm_geometry().startswith("480x500"))
 
 
 class DpiScalingTests(unittest.TestCase):
@@ -112,7 +112,7 @@ class DpiAwareLayoutTests(unittest.TestCase):
         root.update_idletasks()
 
         self.assertTrue(root.wm_geometry().startswith("1080x780"))
-        self.assertEqual(tuple(root.minsize()), (900, 630))
+        self.assertEqual(tuple(root.minsize()), (720, 540))
         self.assertEqual(window.config["window_width"], 720)
         self.assertEqual(window.config["window_height"], 520)
 
@@ -164,9 +164,9 @@ class DpiAwareLayoutTests(unittest.TestCase):
         window._apply_size()
         root.update_idletasks()
 
-        self.assertTrue(root.wm_geometry().startswith("900x750"))
-        self.assertEqual(tuple(root.minsize()), (900, 630))
-        self.assertEqual(window.config["window_width"], 600)
+        self.assertTrue(root.wm_geometry().startswith("720x750"))
+        self.assertEqual(tuple(root.minsize()), (720, 540))
+        self.assertEqual(window.config["window_width"], 480)
         self.assertEqual(window.config["window_height"], 500)
 
     def test_physical_window_dimensions_are_clamped_to_screen(self):
@@ -1074,6 +1074,8 @@ class V3WindowTests(unittest.TestCase):
             {"id": "future", "text": "明天", "done": False,
              "due_at": (datetime.now().astimezone() + timedelta(days=1)).isoformat(),
              "remind_at": None, "reminded": False},
+            {"id": "nodate", "text": "无截止", "done": False,
+             "due_at": None, "remind_at": None, "reminded": False},
         ]
         window = self.make_window()
         window._dispatch(("show", True))
@@ -1087,10 +1089,19 @@ class V3WindowTests(unittest.TestCase):
         self.assertEqual(window.search_bar.winfo_manager(), "")
         self.assertEqual(window.composer.winfo_manager(), "")
         self.assertNotIn("done", window._row_widgets)
-        self.assertNotIn("future", window._row_widgets)
+        self.assertIn("future", window._row_widgets)
+        self.assertIn("nodate", window._row_widgets)
+        self.assertEqual(list(window._row_by_todo_id), ["open", "future", "nodate"])
         row = window._row_by_todo_id["open"]
         self.assertTrue(row.read_only)
         self.assertEqual(str(row.check.cget("state")), "disabled")
+        nodate = window._row_by_todo_id["nodate"]
+        self.assertEqual(nodate.due_label.winfo_manager(), "")
+        self.assertEqual(nodate.remind_label.winfo_manager(), "")
+        self.assertEqual(row.due_label.winfo_manager(), "pack")
+        nodate.card.event_generate("<Enter>")
+        self.root.update()
+        self.assertEqual(nodate.actions.winfo_manager(), "")
         before = [dict(todo) for todo in self.controller.todos]
         row._toggle()
         row._double(mock.Mock(widget=row.title))

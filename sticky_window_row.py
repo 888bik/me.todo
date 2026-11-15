@@ -88,7 +88,7 @@ class _TaskRow:
         self.card.bind("<Enter>", lambda event: window._activate_row(self), add="+")
         self.card.bind("<FocusIn>", lambda event: window._activate_row(self), add="+")
         self._update_bindings()
-        window._bind_hover(self.card, self.actions)
+        window._bind_hover(self.card, self.actions, self)
 
     def _update_bindings(self):
         # Commands are bound methods, so a reused row always acts on self.todo.
@@ -213,7 +213,7 @@ class _TaskRow:
             return
         self.todo = dict(todo)
         self.read_only = read_only
-        self.check.configure(state="disabled" if read_only else "normal")
+        self.actions.pack_forget()
         self.variable.set(bool(todo.get("done")))
         font_size = max(8, int(font_size) - (1 if compact else 0))
         small = max(8, font_size - 1)
@@ -253,12 +253,16 @@ class _TaskRow:
         if due_text is not None:
             self.due_label.configure(text=due_text, fg=due_color, font=_font(small))
             self.due_label.pack(side="left")
+        elif read_only:
+            self.due_label.pack_forget()
         else:
             self.due_label.configure(text="＋截止", fg=MUTED, font=_font(small))
             self.due_label.pack(side="left")
         if remind_text is not None:
             self.remind_label.configure(text=remind_text, font=_font(small))
             self.remind_label.pack(side="left")
+        elif read_only:
+            self.remind_label.pack_forget()
         else:
             self.remind_label.configure(text="＋提醒", fg=MUTED, font=_font(small))
             self.remind_label.pack(side="left")

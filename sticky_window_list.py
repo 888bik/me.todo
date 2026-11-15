@@ -549,8 +549,10 @@ class ListMixin:
             return
         canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def _bind_hover(self, card, actions=None):
+    def _bind_hover(self, card, actions=None, row=None):
         def show(_event=None):
+            if row is not None and row.read_only:
+                return
             try:
                 card.configure(highlightbackground=HOVER)
                 if actions is not None and actions.winfo_manager() != "pack":
