@@ -1,4 +1,7 @@
-﻿# Changelog
+# Changelog
+
+## 3.6.1
+- Icon round 4 final fix: Tk's `iconbitmap` accepted the ICO but left Windows' generic page icon (the small frames are PNG-compressed). `_set_native_icon()` now calls `LoadImageW` + `WM_SETICON` for both 16px and 32px slots after Tk's calls. Real title bar now shows the blue check; verified with a screenshot crop.
 
 ## 3.6.0
 - Subtask input supports continuous add: Tab / Ctrl+Enter create the current subtask and immediately open a fresh empty input at the same parent; empty Tab/Ctrl+Enter does nothing; Return still creates and closes; Escape still cancels.

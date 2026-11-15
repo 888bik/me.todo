@@ -4,6 +4,7 @@ The window is created on its own daemon thread.  Tkinter is still imported
 lazily through ``_load_tk``; importing this module never imports tkinter.
 """
 
+import ctypes
 import os
 import queue
 import threading
@@ -443,6 +444,29 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
             if ico and os.path.exists(ico):
                 self._icon_bitmap = ico
                 self.root.iconbitmap(ico)
+                self._set_native_icon(ico)
+        except Exception:
+            pass
+
+    def _set_native_icon(self, ico):
+        """Set the title-bar HICON directly.
+
+        Tk 8.6's iconbitmap can silently leave the default page icon for ICO
+        files whose small frames are PNG-compressed. LoadImageW + WM_SETICON
+        bypasses that path and uses the same icon Windows will show in the
+        title bar.
+        """
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetAncestor(self.root.winfo_id(), 2)  # GA_ROOT
+            if not hwnd:
+                hwnd = user32.GetParent(self.root.winfo_id())
+            if not hwnd:
+                return
+            for slot, size in ((0, 16), (1, 32)):
+                icon = user32.LoadImageW(0, ctypes.c_wchar_p(ico), 1, size, 0, 0x10)
+                if icon:
+                    user32.SendMessageW(hwnd, 0x0080, slot, icon)
         except Exception:
             pass
 
