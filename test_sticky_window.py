@@ -568,7 +568,7 @@ class ViewTests(unittest.TestCase):
         window._set_view("week")
 
         texts = [label.cget("text") for label in self.body_labels(window)]
-        self.assertEqual(texts.count("每天的事"), 7)
+        self.assertEqual(texts.count("每天的事"), 14)
 
     def test_month_view_shows_two_titles_and_a_more_hint(self):
         self.controller.todos = [
@@ -994,6 +994,123 @@ class V3WindowTests(unittest.TestCase):
         self.assertTrue(overlap)
         for todo_id in overlap:
             self.assertIs(after[todo_id], before[todo_id])
+
+    def test_subtask_tab_keeps_an_empty_input_open(self):
+        window = self.make_window()
+        window._start_subtask("a")
+        entry = window._subtask_entry
+        entry.insert(0, "第一个子任务")
+        added = len(self.controller.added)
+
+        window._create_subtask("a", entry, keep_open=True)
+        self.root.update()
+
+        self.assertEqual(len(self.controller.added), added + 1)
+        self.assertEqual(self.controller.added_parents[-1], "a")
+        self.assertEqual(window._subtask_parent, "a")
+        self.assertIsNot(window._subtask_entry, entry)
+        self.assertEqual(window._subtask_entry.get(), "")
+
+        empty_entry = window._subtask_entry
+        window._create_subtask_keep_open("a", empty_entry)
+        self.root.update()
+        self.assertEqual(len(self.controller.added), added + 1)
+        self.assertIs(window._subtask_entry, empty_entry)
+
+    def test_subtask_return_still_closes_the_input(self):
+        window = self.make_window()
+        window._start_subtask("a")
+        entry = window._subtask_entry
+        entry.insert(0, "普通回车")
+        window._create_subtask("a", entry)
+
+        self.assertIsNone(window._subtask_parent)
+
+    def test_row_due_label_opens_the_shared_picker_without_details(self):
+        window = self.make_window()
+        row = window._row_pool[0]
+        with mock.patch.object(window, "_open_reminder_picker") as picker:
+            row._pick_due()
+
+        self.assertIsNone(getattr(window, "_details_panel", None))
+        self.assertEqual(picker.call_args.kwargs["mode"], "due")
+        self.assertTrue(picker.called)
+
+    def test_row_remind_label_opens_the_reminder_picker(self):
+        window = self.make_window()
+        row = window._row_pool[0]
+        with mock.patch.object(window, "_open_reminder_picker") as picker:
+            row._pick_remind()
+
+        self.assertTrue(picker.called)
+        self.assertNotIn("mode", picker.call_args.kwargs)
+
+    def test_week_view_has_this_and_next_week_blocks(self):
+        window = self.make_window()
+        window._week_start = date(2026, 1, 5)
+        window._set_view("week")
+
+        texts = [label.cget("text") for label in self.body_labels(window)]
+        self.assertIn("本周 1/5 – 1/11", texts)
+        self.assertIn("下周 1/12 – 1/18", texts)
+
+        window._shift_week(1)
+        texts = [label.cget("text") for label in self.body_labels(window)]
+        self.assertIn("本周 1/12 – 1/18", texts)
+        self.assertIn("下周 1/19 – 1/25", texts)
+
+        window._go_week(0)
+        self.assertEqual(window._week_start, date.today() - timedelta(days=date.today().weekday()))
+
+    def test_simple_mode_hides_chrome_and_disables_mutations(self):
+        today = date.today()
+        self.controller.todos = [
+            {"id": "open", "text": "今天未完成", "done": False,
+             "due_at": datetime.combine(today, datetime.min.time()).astimezone().replace(hour=18).isoformat(),
+             "remind_at": None, "reminded": False},
+            {"id": "done", "text": "今天已完成", "done": True,
+             "due_at": datetime.combine(today, datetime.min.time()).astimezone().replace(hour=18).isoformat(),
+             "remind_at": None, "reminded": False},
+            {"id": "future", "text": "明天", "done": False,
+             "due_at": (datetime.now().astimezone() + timedelta(days=1)).isoformat(),
+             "remind_at": None, "reminded": False},
+        ]
+        window = self.make_window()
+        window._dispatch(("show", True))
+        self.root.update()
+        view = window.view
+        window.search_var.set("保留我")
+        window._toggle_simple_mode()
+        self.root.update()
+
+        self.assertEqual(window.nav.winfo_manager(), "")
+        self.assertEqual(window.search_bar.winfo_manager(), "")
+        self.assertEqual(window.composer.winfo_manager(), "")
+        self.assertNotIn("done", window._row_widgets)
+        self.assertNotIn("future", window._row_widgets)
+        row = window._row_by_todo_id["open"]
+        self.assertTrue(row.read_only)
+        self.assertEqual(str(row.check.cget("state")), "disabled")
+        before = [dict(todo) for todo in self.controller.todos]
+        row._toggle()
+        row._double(mock.Mock(widget=row.title))
+        self.assertEqual(self.controller.todos, before)
+
+        window._toggle_simple_mode()
+        self.root.update()
+        self.assertEqual(window.view, view)
+        self.assertEqual(window.nav.winfo_manager(), "pack")
+        self.assertEqual(window.search_bar.winfo_manager(), "pack")
+        self.assertEqual(window.search_var.get(), "保留我")
+
+    def test_lock_status_uses_configured_unlock_hotkey(self):
+        window = self.make_window()
+        window.settings["lock_hotkey"] = "Ctrl+Alt+L"
+        window.locked = True
+        with mock.patch.object(window, "_start_hook", return_value=False):
+            window._apply_lock(announce=True)
+
+        self.assertIn("Ctrl+Alt+L", window.status.cget("text"))
 
     def test_render_reuses_the_same_canvas(self):
         window = self.make_window()
@@ -1936,12 +2053,21 @@ class WindowTests(unittest.TestCase):
         window = self.make_window()
         fake = mock.MagicMock()
         fake.GetParent.return_value = 123
+        fake.CreateWindowExW.return_value = 999
         fake.GetWindowLongPtrW.return_value = 4
         fake.SetWindowLongPtrW.return_value = 4
         fake.SetWindowPos.return_value = 1
 
         self.assertTrue(sticky_window._hide_from_taskbar(window.root, user32=fake))
         self.assertEqual(fake.SetWindowPos.call_args.args[-1], 0x0027)
+        owner_call = fake.SetWindowLongPtrW.call_args_list[0]
+        self.assertEqual(owner_call.args, (123, -8, 999))
+        ex_style_call = fake.SetWindowLongPtrW.call_args_list[1]
+        self.assertEqual(ex_style_call.args[1], -20)
+        self.assertFalse(ex_style_call.args[2] & 0x00000080)
+        style_call = fake.SetWindowLongPtrW.call_args_list[2]
+        self.assertEqual(style_call.args[1], -16)
+        self.assertFalse(style_call.args[2] & 0x00030000)
 
     def test_enter_adds_the_typed_text(self):
         window = self.make_window()
@@ -2492,10 +2618,16 @@ class WindowTests(unittest.TestCase):
         get_style = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
         get_style.argtypes = [wintypes.HWND, ctypes.c_int]
         get_style.restype = ctypes.c_ssize_t
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetWindow.restype = wintypes.HWND
         hwnd = user32.GetParent(window.root.winfo_id()) or window.root.winfo_id()
-        style = get_style(hwnd, -20)
+        ex_style = get_style(hwnd, -20)
+        style = get_style(hwnd, -16)
 
-        self.assertTrue(style & 0x00000080)  # WS_EX_TOOLWINDOW
+        self.assertFalse(ex_style & 0x00000080)  # no WS_EX_TOOLWINDOW
+        self.assertTrue(user32.GetWindow(hwnd, 4))  # GW_OWNER
+        self.assertFalse(style & 0x00010000)  # WS_MAXIMIZEBOX
+        self.assertFalse(style & 0x00020000)  # WS_MINIMIZEBOX
 
     def test_window_uses_the_plugin_icon_bitmap(self):
         here = os.path.dirname(os.path.abspath(__file__))

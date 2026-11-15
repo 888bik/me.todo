@@ -249,6 +249,9 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self._subtask_frame = None
         self.locked = bool(self.config.get("locked"))
         self._topmost_restore_id = None
+        self.simple_mode = False
+        self._simple_prev_view = None
+        self._simple_prev_yview = None
         self._hook = None
         self._hook_rect = None
         self._last_hook_check = 0.0
@@ -271,11 +274,15 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self.style = ttk.Style(self.root)
         self.style.configure("Card.TCheckbutton", background=CARD, font=_font(self.font_size))
         self.style.map("Card.TCheckbutton", background=[("active", CARD)])
+        self._entry_font = tkfont.Font(
+            root=self.root, family=FONT_FAMILY, size=self.font_size,
+        )
 
         self.nav = tk.Frame(self.root, bg=BG, width=NAV_WIDTH)
         self.nav.pack(side="left", fill="y")
         self.nav.pack_propagate(False)
-        tk.Frame(self.root, bg=BORDER, width=1).pack(side="left", fill="y")
+        self.nav_separator = tk.Frame(self.root, bg=BORDER, width=1)
+        self.nav_separator.pack(side="left", fill="y")
         self.main = tk.Frame(self.root, bg=BG)
         self.main.pack(side="left", fill="both", expand=True)
         self._build_nav()
@@ -316,6 +323,13 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         )
         self.lock_button.pack(side="right", padx=(0, 2))
 
+        self.simple_button = tk.Button(
+            right, text="简", relief="flat", bd=0, bg=BG, fg=MUTED,
+            activebackground=BG, activeforeground=ACCENT, cursor="hand2", padx=4,
+            font=_font(max(8, self.font_size - 1)), command=self._toggle_simple_mode,
+        )
+        self.simple_button.pack(side="right", padx=(0, 2))
+
         self.count = tk.Label(
             right, text="", bg=TODAY_BG, fg=ACCENT,
             font=_font(max(8, self.font_size - 1), bold=True), padx=8, pady=3,
@@ -330,6 +344,7 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         )
 
         search_bar = tk.Frame(self.main, bg=BG)
+        self.search_bar = search_bar
         search_bar.pack(side="top", fill="x", padx=14, pady=(0, 6))
         tk.Label(
             search_bar, text="🔍", bg=BG, fg=MUTED, font=_font(max(8, self.font_size - 1))
@@ -338,7 +353,7 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self.search_entry = tk.Entry(
             search_bar, textvariable=self.search_var, relief="flat", bg=CARD, fg=TEXT,
             insertbackground=TEXT, highlightthickness=1, highlightbackground=BORDER,
-            highlightcolor=ACCENT, font=_font(max(8, self.font_size - 1)),
+            highlightcolor=ACCENT, font=self._entry_font,
         )
         self.search_entry.pack(side="left", fill="x", expand=True, padx=(6, 0), ipady=3)
         self.search_entry.bind("<KeyRelease>", self._on_search_key)
@@ -349,7 +364,8 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
             font=_font(self.font_size + 2), command=self._clear_search,
         )
 
-        tk.Frame(self.main, bg=BORDER, height=1).pack(side="top", fill="x", padx=12)
+        self.search_separator = tk.Frame(self.main, bg=BORDER, height=1)
+        self.search_separator.pack(side="top", fill="x", padx=12)
 
         self.bottom = tk.Frame(self.main, bg=BG)
         self.bottom.pack(side="bottom", fill="x")
@@ -378,7 +394,7 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
             highlightthickness=1,
             highlightbackground=BORDER,
             highlightcolor=ACCENT,
-            font=_font(self.font_size),
+            font=self._entry_font,
         )
         self.entry.bind("<Return>", lambda event: self._add_from_entry())
         self.add_button = tk.Button(
@@ -565,14 +581,15 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self._render()
 
     def _apply_fonts(self):
+        self._entry_font.configure(size=self.font_size)
         self.title_label.configure(font=_font(self.font_size + 2, bold=True))
         self.count.configure(font=_font(max(8, self.font_size - 1), bold=True))
         self.status.configure(font=_font(max(8, self.font_size - 2)))
-        self.entry.configure(font=_font(self.font_size))
+        self.entry.configure(font=self._entry_font)
         self.add_button.configure(font=_font(self.font_size))
         self.gear.configure(font=_font(self.font_size))
         self.lock_button.configure(font=_font(max(8, self.font_size - 1)))
-        self.search_entry.configure(font=_font(max(8, self.font_size - 1)))
+        self.search_entry.configure(font=self._entry_font)
         self.search_clear_button.configure(font=_font(self.font_size + 2))
         self.clear_button.configure(font=_font(max(8, self.font_size - 1)))
         self.undo_button.configure(font=_font(max(8, self.font_size - 2)))
@@ -755,6 +772,9 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
             # lost. Remember it and redraw once the edit is saved or cancelled.
             self._refresh_pending = True
             return
+        if self.simple_mode:
+            self._render_simple()
+            return
         previous_yview = None
         if self.view in ("list", "today"):
             try:
@@ -810,6 +830,60 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
             self._row_by_todo_id = {}
             self._row_widgets = {}
             self._row_actions = {}
+
+    def _toggle_simple_mode(self):
+        if not self.simple_mode:
+            self._simple_prev_view = self.view
+            self._simple_prev_yview = None
+            if self.canvas is not None and self.canvas.winfo_exists():
+                try:
+                    self._simple_prev_yview = self.canvas.yview()[0]
+                except Exception:
+                    pass
+            self.simple_mode = True
+            self.nav.pack_forget()
+            self.nav_separator.pack_forget()
+            self.search_bar.pack_forget()
+            self.simple_button.configure(text="简", fg=ACCENT, bg=TODAY_BG)
+            self._render_simple()
+        else:
+            self.simple_mode = False
+            self.simple_button.configure(text="简", fg=MUTED, bg=BG)
+            self.nav_separator.pack(side="left", fill="y", before=self.main)
+            self.nav.pack(side="left", fill="y", before=self.nav_separator)
+            self.search_bar.pack(
+                side="top", fill="x", padx=14, pady=(0, 6),
+                before=self.search_separator,
+            )
+            self._render()
+            if self._simple_prev_yview is not None and self.canvas is not None:
+                try:
+                    self.canvas.yview_moveto(self._simple_prev_yview)
+                except Exception:
+                    pass
+            self._simple_prev_view = None
+            self._simple_prev_yview = None
+
+    def _render_simple(self):
+        same_list = bool(
+            getattr(self, "canvas", None) is not None
+            and self.canvas.winfo_exists()
+            and self.canvas.master is self.body
+        )
+        if not same_list:
+            for child in self.body.winfo_children():
+                child.destroy()
+            self._list_empty_frame = None
+        todos = self.controller.list()
+        simple = [todo for todo in self._today_todos(todos) if not todo["done"]]
+        self._show_composer(False)
+        open_count = len(simple)
+        self.count.configure(text=("%d 条未完成" % open_count) if open_count else "全部完成")
+        self.clear_button.pack_forget()
+        if simple:
+            self._render_list(simple, empty_text="今天没有未完成")
+        else:
+            self._render_list([], empty_text="今天没有未完成")
 
     def _today_todos(self, todos):
         today = date.today()

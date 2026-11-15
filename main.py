@@ -11,7 +11,7 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import quickparse
 import sticky_window
@@ -210,6 +210,16 @@ class App:
         else:
             tags = [str(tag).strip() for tag in tags if str(tag).strip()][:5]
         priority_value = store._priority(priority) if priority is not None else 0
+        if due_at is None and not parent_id:
+            try:
+                default_days = int((self.settings or {}).get("default_due_days") or 0)
+            except (TypeError, ValueError):
+                default_days = 0
+            if default_days > 0:
+                due_at = (
+                    datetime.now().astimezone().replace(hour=23, minute=59, second=59, microsecond=0)
+                    + timedelta(days=default_days)
+                ).isoformat(timespec="seconds")
         with self.lock:
             todo = store.new_todo(
                 raw,
@@ -488,12 +498,19 @@ app = App()
 
 # ---- hotkey --------------------------------------------------------------------
 
+def _lock_hotkey(app_instance=None):
+    settings = (app_instance.settings if app_instance is not None else app.settings) or {}
+    key = str(settings.get("lock_hotkey") or UNLOCK_HOTKEY).strip()
+    return key or UNLOCK_HOTKEY
+
+
 def register_hotkey(app_instance, plugin, attempt=0):
     """Register the show/hide key and a separate emergency unlock key."""
     key = str((app_instance.settings or {}).get("hotkey") or DEFAULT_HOTKEY).strip() or DEFAULT_HOTKEY
+    unlock = _lock_hotkey(app_instance)
     keys = [key]
-    if key.casefold() != UNLOCK_HOTKEY.casefold():
-        keys.append(UNLOCK_HOTKEY)
+    if key.casefold() != unlock.casefold():
+        keys.append(unlock)
     try:
         plugin.hotkeys(keys)
     except Exception:
@@ -841,7 +858,7 @@ def on_menu(menu_id, plugin):
 def on_hotkey(key, plugin):
     # This second global hotkey remains usable while the note itself is
     # click-through. It is deliberately independent of the show/hide key.
-    if str(key).casefold() == UNLOCK_HOTKEY.casefold():
+    if str(key).casefold() == _lock_hotkey(app).casefold():
         if app.config.get("locked"):
             app.set_locked(False)
             sticky_window.set_locked(False)
@@ -849,6 +866,9 @@ def on_hotkey(key, plugin):
                 winshun.notify("便签已解锁")
             except Exception:
                 pass
+        elif sticky_window.is_visible():
+            app.set_locked(True)
+            sticky_window.set_locked(True)
         return
     if sticky_window.is_visible():
         app.hide_sticky()

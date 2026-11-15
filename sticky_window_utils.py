@@ -94,12 +94,15 @@ def _log(message):
         pass
 
 
-def _hide_from_taskbar(root, user32=None):
-    """Keep the note out of the taskbar/Alt+Tab: it is opened from the tray.
+_OWNER_WINDOWS = []
 
-    Order matters: withdraw first, then change the style, then SetWindowPos
-    with SWP_FRAMECHANGED so the shell re-reads the style. Skipping that
-    refresh is why some machines kept showing the button.
+
+def _hide_from_taskbar(root, user32=None):
+    """Keep the note off the taskbar/Alt+Tab by owning it to a hidden window.
+
+    This preserves the normal Explorer title bar (unlike WS_EX_TOOLWINDOW),
+    while the hidden owner suppresses the taskbar/Alt+Tab entry.  Minimize and
+    maximize boxes are removed so only the normal close button remains.
     """
     if os.name != "nt":
         return False
@@ -113,6 +116,20 @@ def _hide_from_taskbar(root, user32=None):
         user32.GetParent.restype = wintypes.HWND
         hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
 
+        user32.CreateWindowExW.argtypes = [
+            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+        ]
+        user32.CreateWindowExW.restype = wintypes.HWND
+        owner = user32.CreateWindowExW(
+            0, "STATIC", "", 0x80000000, 0, 0, 0, 0, None, None, None, None,
+        )
+        if not owner:
+            _log("CreateWindowExW owner failed: error %s" % ctypes.get_last_error())
+            return False
+        _OWNER_WINDOWS.append(owner)
+
         get_style = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
         set_style = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
         get_style.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -120,15 +137,18 @@ def _hide_from_taskbar(root, user32=None):
         set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
         set_style.restype = ctypes.c_ssize_t
 
-        style = get_style(hwnd, -20)  # GWL_EXSTYLE
-        new_style = (style | 0x00000080) & ~0x00040000  # | TOOLWINDOW, & ~APPWINDOW
-
+        # Own the window; remove toolwindow/appwindow and min/max boxes.
         ctypes.set_last_error(0)
-        previous = set_style(hwnd, -20, new_style)
-        error = ctypes.get_last_error()
-        if previous == 0 and error:
-            _log("SetWindowLongPtrW failed: error %s" % error)
+        previous = set_style(hwnd, -8, owner)  # GWLP_HWNDPARENT
+        if previous == 0 and ctypes.get_last_error():
+            _log("SetWindowLongPtrW owner failed: error %s" % ctypes.get_last_error())
             return False
+        ex_style = get_style(hwnd, -20)
+        ex_style = (ex_style & ~0x00000080) & ~0x00040000
+        set_style(hwnd, -20, ex_style)
+        style = get_style(hwnd, -16)
+        style &= ~0x00030000  # WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+        set_style(hwnd, -16, style)
 
         # SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED
         user32.SetWindowPos.argtypes = [

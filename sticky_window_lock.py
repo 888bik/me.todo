@@ -26,6 +26,11 @@ def _click_through(root, enabled):
     import sticky_window
     return sticky_window._set_click_through(root, enabled)
 
+
+def _unlock_label(window):
+    key = str((getattr(window, "settings", None) or {}).get("lock_hotkey") or "Ctrl+Alt+U").strip()
+    return key or "Ctrl+Alt+U"
+
 class LockMixin:
     def _set_topmost(self, enabled):
         """Keep the main note above other apps only while it is visible+locked."""
@@ -86,7 +91,7 @@ class LockMixin:
             # keyboard route back to the unlocked state.
             _click_through(self.root, bool(hook_active))
             if announce:
-                self.status.configure(text="已锁定 · Ctrl+双击解锁 · Ctrl+Alt+U 紧急解锁")
+                self.status.configure(text="已锁定 · Ctrl+双击解锁 · %s 紧急解锁" % _unlock_label(self))
             return bool(hook_active)
         else:
             _click_through(self.root, False)
@@ -119,7 +124,7 @@ class LockMixin:
 
         if hook_active:
             try:
-                self.status.configure(text="已锁定 · Ctrl+双击解锁 · Ctrl+Alt+U 紧急解锁")
+                self.status.configure(text="已锁定 · Ctrl+双击解锁 · %s 紧急解锁" % _unlock_label(self))
             except Exception:
                 pass
         else:
@@ -127,7 +132,7 @@ class LockMixin:
             # a failed hook must never leave WS_EX_TRANSPARENT enabled.
             _click_through(self.root, False)
             try:
-                self.status.configure(text="钩子不可用，无法 Ctrl+双击解锁 · 请使用 Ctrl+Alt+U 解锁")
+                self.status.configure(text="钩子不可用，无法 Ctrl+双击解锁 · 请使用 %s 解锁" % _unlock_label(self))
             except Exception:
                 pass
 

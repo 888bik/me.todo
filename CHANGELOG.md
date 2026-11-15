@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.6.0
+- Subtask input supports continuous add: Tab / Ctrl+Enter create the current subtask and immediately open a fresh empty input at the same parent; empty Tab/Ctrl+Enter does nothing; Return still creates and closes; Escape still cancels.
+- New `lock_hotkey` hotkey setting (default `Ctrl+Alt+U`) controls both registration and the lock-status hint; `Ctrl+Alt+U` remains the fallback. Default unlock behavior is unchanged; changing it follows the existing hotkey re-registration path.
+- New `default_due_days` number setting: N>0 gives new top-level todos a due time at 23:59:59 N days later; 0 keeps today's no-due default. Existing todos and subtasks are untouched.
+- Row due/remind labels are clickable: due opens the shared due picker, remind opens the reminder picker; empty values show clickable `＋截止` / `＋提醒` placeholders. The detail panel is not opened.
+- Week view now shows 本周 and 下周 blocks, each with its own date-range title; ‹ / › move both weeks, 本周 returns to the current week, and today highlighting follows the block containing today.
+- Header adds a “简” toggle for a read-only today list: hides navigation/search/composer, shows only unfinished today/overdue/repeating items, disables row click/double-click/checkbox, and restores the previous view and scroll position on exit.
+- Lock hotkey is now a toggle: while visible and unlocked it locks, while locked it unlocks; hidden+unlocked remains a no-op. Unlock branch/notification unchanged.
+- The normal Explorer title bar is restored: the old WS_EX_TOOLWINDOW style is gone. A hidden STATIC owner window is assigned through GWLP_HWNDPARENT so the note stays out of the taskbar/Alt+Tab, and WS_MINIMIZEBOX/WS_MAXIMIZEBOX are cleared so only the normal close button remains.
+- Input fonts: the composer, search, subtask and inline-edit entries now all use one named `tkfont.Font` created after Tk scaling is applied. This is the code-side mitigation for undersized IME composition text; the Windows 3K/150% IME reproduction and before/after screenshots could not be captured in this non-interactive run, so visual acceptance is still pending.
+- No existing behavior, data format, shortcut defaults, or storage path changed.
+- Bench medians (7 rounds): Windows 2000 refresh/search 0.014/0.025, 10000 0.041/0.091; an earlier Windows run showed 0.019/0.036 and 0.057/0.124 but a rerun recovered, confirming machine load rather than code. Linux (Muse): 2000 0.153/0.172, 10000 0.196/0.270, level with 3.5.2.
+
 ## 3.5.2
 - Task rows now carry a full content signature (task fields, child counts, compact/font, palette version, minute); unchanged rows skip all Tk configure/pack work while still refreshing `self.todo` for callbacks. Selection is a separate `set_selected` update.
 - The visible row pool is mapped by stable task id (`_row_by_todo_id`), so a still-visible task keeps its existing `_TaskRow` across scrolls; only entering tasks take a free row.

@@ -37,27 +37,37 @@ class CalendarMixin:
             bg=BG, fg=MUTED, font=_font(small),
         ).pack(side="right")
 
-        grid = tk.Frame(self.body, bg=BG)
-        grid.pack(fill="both", expand=True)
-        by_day = self._occurrence_map(todos, start, end)
+        by_day = self._occurrence_map(todos, start, start + timedelta(days=13))
         today = date.today()
-
-        for column in range(7):
-            grid.columnconfigure(column, weight=1, uniform="week")
-            day = start + timedelta(days=column)
-            cell_bg = TODAY_BG if day == today else BG
-            cell = tk.Frame(grid, bg=cell_bg, highlightbackground=BORDER, highlightthickness=1)
-            cell.grid(row=0, column=column, sticky="nsew", padx=2, pady=2)
-            tk.Label(cell, text="周" + store.WEEKDAYS[column], bg=cell_bg, fg=MUTED, font=_font(small)).pack(
-                anchor="w", padx=4, pady=(4, 0)
-            )
+        for title, block_start in (("本周", start), ("下周", start + timedelta(days=7))):
+            block_end = block_start + timedelta(days=6)
+            block = tk.Frame(self.body, bg=BG)
+            block.pack(fill="both", expand=True, pady=(0, 6))
             tk.Label(
-                cell, text="%d/%d" % (day.month, day.day), bg=cell_bg, fg=TEXT,
-                font=_font(small, bold=True),
-            ).pack(anchor="w", padx=4)
-            for todo in by_day.get(day, []):
-                self._calendar_label(cell, todo, cell_bg, width=70)
-        grid.rowconfigure(0, weight=1)
+                block,
+                text="%s %d/%d – %d/%d" % (
+                    title, block_start.month, block_start.day, block_end.month, block_end.day,
+                ),
+                anchor="w", bg=BG, fg=TEXT, font=_font(small, bold=True),
+            ).pack(fill="x", pady=(0, 2))
+            grid = tk.Frame(block, bg=BG)
+            grid.pack(fill="both", expand=True)
+            for column in range(7):
+                grid.columnconfigure(column, weight=1, uniform="week")
+                day = block_start + timedelta(days=column)
+                cell_bg = TODAY_BG if day == today else BG
+                cell = tk.Frame(grid, bg=cell_bg, highlightbackground=BORDER, highlightthickness=1)
+                cell.grid(row=0, column=column, sticky="nsew", padx=2, pady=2)
+                tk.Label(cell, text="周" + store.WEEKDAYS[column], bg=cell_bg, fg=MUTED, font=_font(small)).pack(
+                    anchor="w", padx=4, pady=(4, 0)
+                )
+                tk.Label(
+                    cell, text="%d/%d" % (day.month, day.day), bg=cell_bg, fg=TEXT,
+                    font=_font(small, bold=True),
+                ).pack(anchor="w", padx=4)
+                for todo in by_day.get(day, []):
+                    self._calendar_label(cell, todo, cell_bg, width=70)
+            grid.rowconfigure(0, weight=1)
 
     def _shift_week(self, delta):
         self._week_start += timedelta(weeks=delta)

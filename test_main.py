@@ -421,13 +421,15 @@ class HotkeyTests(PluginTestCase):
         set_locked.assert_called_once_with(False)
         notify.assert_called_once_with("便签已解锁")
 
-    def test_emergency_unlock_hotkey_does_not_toggle_visibility_when_unlocked(self):
-        with mock.patch("main.sticky_window.is_visible") as visible, \
+    def test_emergency_unlock_hotkey_locks_only_a_visible_note(self):
+        with mock.patch("main.sticky_window.is_visible", return_value=False) as visible, \
+                mock.patch("main.sticky_window.set_locked") as set_locked, \
                 mock.patch.object(self.app, "show_sticky") as show, \
                 mock.patch.object(self.app, "hide_sticky") as hide:
             main.on_hotkey(main.UNLOCK_HOTKEY, None)
 
-        visible.assert_not_called()
+        visible.assert_called_once()
+        set_locked.assert_not_called()
         show.assert_not_called()
         hide.assert_not_called()
 
@@ -466,6 +468,77 @@ class SortCacheTests(PluginTestCase):
             ordered = self.app.list()
         self.assertIn(todo["id"], [item["id"] for item in ordered])
         self.assertGreaterEqual(due.call_count, 1)
+
+
+class LockHotkeyTests(PluginTestCase):
+    def test_default_lock_hotkey_is_registered(self):
+        plugin = mock.Mock()
+        plugin.tool.return_value = {}
+
+        main.register_hotkey(self.app, plugin)
+
+        keys = plugin.tool.call_args.kwargs["keys"]
+        self.assertIn("Ctrl+Alt+U", keys)
+
+    def test_configured_lock_hotkey_is_registered(self):
+        self.app.settings = {"hotkey": "Ctrl+Alt+T", "lock_hotkey": "Ctrl+Alt+L"}
+        plugin = mock.Mock()
+        plugin.tool.return_value = {}
+
+        main.register_hotkey(self.app, plugin)
+
+        keys = plugin.tool.call_args.kwargs["keys"]
+        self.assertIn("Ctrl+Alt+L", keys)
+        self.assertNotIn("Ctrl+Alt+U", keys)
+
+    def test_configured_unlock_hotkey_unlocks(self):
+        self.app.settings = {"lock_hotkey": "Ctrl+Alt+L"}
+        self.app.config["locked"] = True
+        with mock.patch("sticky_window.set_locked") as set_locked, \
+                mock.patch("main.winshun.notify"):
+            main.on_hotkey("Ctrl+Alt+L", mock.Mock())
+
+        set_locked.assert_called_once_with(False)
+        self.assertFalse(self.app.config["locked"])
+
+    def test_unlock_hotkey_locks_a_visible_unlocked_note(self):
+        self.app.settings = {"lock_hotkey": "Ctrl+Alt+L"}
+        self.app.config["locked"] = False
+        with mock.patch("sticky_window.is_visible", return_value=True), \
+                mock.patch("sticky_window.set_locked") as set_locked:
+            main.on_hotkey("Ctrl+Alt+L", mock.Mock())
+
+        set_locked.assert_called_once_with(True)
+        self.assertTrue(self.app.config["locked"])
+
+    def test_unlock_hotkey_does_nothing_when_note_is_hidden(self):
+        self.app.settings = {"lock_hotkey": "Ctrl+Alt+L"}
+        self.app.config["locked"] = False
+        with mock.patch("sticky_window.is_visible", return_value=False), \
+                mock.patch("sticky_window.set_locked") as set_locked:
+            main.on_hotkey("Ctrl+Alt+L", mock.Mock())
+
+        set_locked.assert_not_called()
+        self.assertFalse(self.app.config["locked"])
+
+
+class DefaultDueTests(PluginTestCase):
+    def test_default_due_days_adds_end_of_day(self):
+        self.app.settings = {"default_due_days": 1}
+        todo = self.app.add("默认截止")
+        due = datetime.fromisoformat(todo["due_at"])
+        self.assertEqual(due.date(), date.today() + timedelta(days=1))
+        self.assertEqual((due.hour, due.minute, due.second), (23, 59, 59))
+
+    def test_zero_default_due_days_leaves_no_due(self):
+        self.app.settings = {"default_due_days": 0}
+        self.assertIsNone(self.app.add("无默认截止")["due_at"])
+
+    def test_child_does_not_inherit_default_due(self):
+        self.app.settings = {"default_due_days": 2}
+        parent = self.app.add("父")
+        child = self.app.add("子", parent_id=parent["id"])
+        self.assertIsNone(child["due_at"])
 
 
 class ImportReloadTests(PluginTestCase):
@@ -943,7 +1016,7 @@ class ManifestTests(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(self.manifest["id"], "me.todo")
         self.assertEqual(self.manifest["id"], os.path.basename(HERE))
-        self.assertEqual(self.manifest["version"], "3.5.2")
+        self.assertEqual(self.manifest["version"], "3.6.0")
         self.assertEqual(self.manifest["author"], "888bik")
         self.assertEqual(self.manifest["license"], "MIT")
         self.assertEqual(self.manifest["icon"], "icon.png")
@@ -978,13 +1051,20 @@ class ManifestTests(unittest.TestCase):
 
     def test_settings_match_the_spec(self):
         settings = {setting["key"]: setting for setting in self.manifest["settings"]}
-        self.assertEqual(sorted(settings), ["hotkey", "reminder_sound", "show_sticky", "transparency"])
+        self.assertEqual(sorted(settings), [
+            "default_due_days", "hotkey", "lock_hotkey", "reminder_sound",
+            "show_sticky", "transparency",
+        ])
         self.assertEqual(settings["show_sticky"]["type"], "bool")
         self.assertTrue(settings["show_sticky"]["default"])
         self.assertEqual(settings["transparency"]["type"], "number")
         self.assertEqual(settings["transparency"]["default"], 95)
         self.assertEqual(settings["hotkey"]["type"], "hotkey")
         self.assertEqual(settings["hotkey"]["default"], "Ctrl+Alt+T")
+        self.assertEqual(settings["lock_hotkey"]["type"], "hotkey")
+        self.assertEqual(settings["lock_hotkey"]["default"], "Ctrl+Alt+U")
+        self.assertEqual(settings["default_due_days"]["type"], "number")
+        self.assertEqual(settings["default_due_days"]["default"], 0)
         self.assertEqual(settings["reminder_sound"]["type"], "bool")
         self.assertTrue(settings["reminder_sound"]["default"])
 

@@ -30,6 +30,7 @@ class _TaskRow:
         self._needs_rebuild = False
         self._signature = None
         self._selected = False
+        self.read_only = False
         self.card = tk.Frame(
             parent, bg=CARD, highlightbackground=BORDER, highlightthickness=1, takefocus=1,
         )
@@ -77,6 +78,9 @@ class _TaskRow:
         self.remind_label = tk.Label(self.meta, anchor="w", bg=CARD, fg=CLOCK, font=_font(10))
         self.progress_label = tk.Label(self.meta, anchor="w", bg=CARD, fg=MUTED, font=_font(10))
         self.pill = tk.Label(self.meta, anchor="w", bg=MUTED, fg="#FFFFFF", font=_font(9, bold=True), padx=5)
+        for label, picker in ((self.due_label, self._pick_due), (self.remind_label, self._pick_remind)):
+            label.bind("<Button-1>", picker, add="+")
+            label.bind("<Double-Button-1>", lambda event: "break", add="+")
 
         for widget in (self.title, self.middle, self.card):
             widget.bind("<Button-1>", self._click)
@@ -91,6 +95,8 @@ class _TaskRow:
         pass
 
     def _click(self, event):
+        if self.read_only:
+            return "break"
         try:
             kind = event.widget.winfo_class()
         except Exception:
@@ -100,7 +106,28 @@ class _TaskRow:
         if self.todo is not None:
             self.window._select_todo(self.todo)
 
+    def _pick_due(self, event=None):
+        if self.read_only or self.todo is None:
+            return "break"
+        self.window._open_reminder_picker(
+            dict(self.todo), mode="due", on_saved=self._refresh_after_picker
+        )
+        return "break"
+
+    def _pick_remind(self, event=None):
+        if self.read_only or self.todo is None:
+            return "break"
+        self.window._open_reminder_picker(
+            dict(self.todo), on_saved=self._refresh_after_picker
+        )
+        return "break"
+
+    def _refresh_after_picker(self):
+        self.window._render()
+
     def _double(self, event):
+        if self.read_only:
+            return "break"
         try:
             kind = event.widget.winfo_class()
         except Exception:
@@ -111,24 +138,29 @@ class _TaskRow:
             self.window._select_todo(self.todo)
 
     def _toggle(self):
-        if self.todo is not None:
-            self.window._toggle(self.todo["id"])
+        if self.read_only or self.todo is None:
+            return
+        self.window._toggle(self.todo["id"])
 
     def _delete(self):
-        if self.todo is not None:
-            self.window._delete(self.todo["id"])
+        if self.read_only or self.todo is None:
+            return
+        self.window._delete(self.todo["id"])
 
     def _open(self):
-        if self.todo is not None:
-            self.window._select_todo(self.todo)
+        if self.read_only or self.todo is None:
+            return
+        self.window._select_todo(self.todo)
 
     def _remind(self):
-        if self.todo is not None:
-            self.window._open_reminder_picker(self.todo)
+        if self.read_only or self.todo is None:
+            return
+        self.window._open_reminder_picker(self.todo)
 
     def _subtask(self):
-        if self.todo is not None:
-            self.window._start_subtask(self.todo["id"])
+        if self.read_only or self.todo is None:
+            return
+        self.window._start_subtask(self.todo["id"])
 
     def _date_labels(self, todo, done):
         """Cache due/remind text per task + minute, not per Configure event."""
@@ -160,7 +192,7 @@ class _TaskRow:
         self._date_cache = (due_text, color, remind_text)
         return self._date_cache
 
-    def _signature_for(self, todo, compact, font_size):
+    def _signature_for(self, todo, compact, font_size, read_only=False):
         counts = self.window._child_counts.get(todo.get("id"), (0, 0))
         return (
             todo.get("id"), todo.get("text"), bool(todo.get("done")),
@@ -168,17 +200,20 @@ class _TaskRow:
             tuple(todo.get("tags") or []), todo.get("note") or "",
             todo.get("due_at"), todo.get("remind_at"), repr(todo.get("repeat")),
             todo.get("parent_id"), counts, bool(compact), int(font_size),
-            getattr(_theme, "_palette_version", 0),
+            getattr(_theme, "_palette_version", 0), bool(read_only),
             datetime.now().astimezone().replace(second=0, microsecond=0),
         )
 
-    def update(self, todo, compact=False, font_size=10, selected=False):
-        signature = self._signature_for(todo, compact, font_size)
+    def update(self, todo, compact=False, font_size=10, selected=False, read_only=False):
+        signature = self._signature_for(todo, compact, font_size, read_only)
         if signature == self._signature:
             self.todo = dict(todo)
+            self.read_only = read_only
             self.set_selected(selected)
             return
         self.todo = dict(todo)
+        self.read_only = read_only
+        self.check.configure(state="disabled" if read_only else "normal")
         self.variable.set(bool(todo.get("done")))
         font_size = max(8, int(font_size) - (1 if compact else 0))
         small = max(8, font_size - 1)
@@ -218,8 +253,14 @@ class _TaskRow:
         if due_text is not None:
             self.due_label.configure(text=due_text, fg=due_color, font=_font(small))
             self.due_label.pack(side="left")
+        else:
+            self.due_label.configure(text="＋截止", fg=MUTED, font=_font(small))
+            self.due_label.pack(side="left")
         if remind_text is not None:
             self.remind_label.configure(text=remind_text, font=_font(small))
+            self.remind_label.pack(side="left")
+        else:
+            self.remind_label.configure(text="＋提醒", fg=MUTED, font=_font(small))
             self.remind_label.pack(side="left")
         total, done_children = self.window._child_counts.get(todo.get("id"), (0, 0))
         if total:
@@ -238,6 +279,7 @@ class _TaskRow:
         else:
             self.plus.pack(side="right")
         self.actions.pack_forget()
+        self.check.configure(state="disabled" if read_only else "normal")
         self.set_selected(selected)
         self._signature = signature
 
@@ -254,6 +296,7 @@ class _TaskRow:
             label.configure(text="")
             label.pack_forget()
         self.actions.pack_forget()
+        self.check.configure(state="normal")
         self.set_selected(False)
 
     def set_selected(self, selected):

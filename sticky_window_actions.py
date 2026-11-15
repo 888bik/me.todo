@@ -90,7 +90,7 @@ class ActionsMixin:
         self._edit_entry = tk.Entry(
             middle, relief="flat", bg=CARD, fg=TEXT, insertbackground=TEXT,
             highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT,
-            font=_font(self.font_size),
+            font=getattr(self, "_entry_font", None) or _font(self.font_size),
         )
         self._edit_entry.insert(0, todo["text"])
         self._edit_entry.pack(fill="x", anchor="w")
@@ -137,25 +137,40 @@ class ActionsMixin:
         entry = tk.Entry(
             frame, relief="flat", bg=CARD, fg=TEXT, insertbackground=TEXT,
             highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT,
-            font=_font(self.font_size),
+            font=getattr(self, "_entry_font", None) or _font(self.font_size),
         )
         entry.pack(side="left", fill="x", expand=True, ipady=4)
         entry.bind("<Return>", lambda event: self._create_subtask(parent["id"], entry))
+        entry.bind("<Tab>", lambda event: self._create_subtask_keep_open(parent["id"], entry))
+        entry.bind("<Control-Return>", lambda event: self._create_subtask_keep_open(parent["id"], entry))
         entry.bind("<Escape>", lambda event: self._cancel_subtask())
         entry.focus_set()
         self._subtask_entry = entry
 
-    def _create_subtask(self, parent_id, entry):
+    def _create_subtask_keep_open(self, parent_id, entry):
+        self._create_subtask(parent_id, entry, keep_open=True)
+        return "break"
+
+    def _create_subtask(self, parent_id, entry, keep_open=False):
         text = entry.get().strip()
+        if not text and keep_open:
+            return
         self._subtask_parent = None
         self._subtask_entry = None
+        self._subtask_widget = None
+        self._subtask_frame = None
         if text:
             self.controller.add(text, parent_id=parent_id)
+        if keep_open:
+            self._subtask_parent = parent_id
+            self._subtask_needs_focus = True
         self._render()
 
     def _cancel_subtask(self):
         self._subtask_parent = None
         self._subtask_entry = None
+        self._subtask_widget = None
+        self._subtask_frame = None
         self._render()
 
     def _export(self):

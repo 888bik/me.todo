@@ -258,10 +258,12 @@ class ListMixin:
         entry = tk.Entry(
             frame, relief="flat", bg=CARD, fg=TEXT, insertbackground=TEXT,
             highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT,
-            font=_font(self.font_size),
+            font=getattr(self, "_entry_font", None) or _font(self.font_size),
         )
         entry.pack(side="left", fill="x", expand=True, ipady=4)
         entry.bind("<Return>", lambda event: self._create_subtask(self._subtask_parent, entry))
+        entry.bind("<Tab>", lambda event: self._create_subtask_keep_open(self._subtask_parent, entry))
+        entry.bind("<Control-Return>", lambda event: self._create_subtask_keep_open(self._subtask_parent, entry))
         entry.bind("<Escape>", lambda event: self._cancel_subtask())
         self._subtask_widget = frame
         self._subtask_frame = frame
@@ -346,7 +348,8 @@ class ListMixin:
                 if row not in self._row_pool:
                     self._row_pool.append(row)
                 selected = todo_id == getattr(self, "_selected_todo_id", None)
-                row.update(todo, compact=self.compact, font_size=self.font_size, selected=selected)
+                row.update(todo, compact=self.compact, font_size=self.font_size,
+                           selected=selected, read_only=self.simple_mode)
                 self._place_card(row.card, item, width)
                 assigned.add(row)
                 current[todo_id] = row
