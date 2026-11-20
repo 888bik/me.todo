@@ -2067,12 +2067,14 @@ class WindowTests(unittest.TestCase):
         window._dispatch(("show", False))
         self.assertTrue(sticky_window.is_visible())
 
-        window._on_close()
+        with mock.patch.object(window.controller, "set_sticky_visible", create=True) as persist:
+            window._on_close()
 
         self.assertFalse(sticky_window.is_visible())
         self.assertTrue(self.root.winfo_exists())
         self.assertEqual(window.status.cget("text"), "")
         self.assertEqual(str(window.root.state()), "withdrawn")
+        persist.assert_called_once_with(False)
 
     def test_tray_menu_offers_show_after_close(self):
         import main

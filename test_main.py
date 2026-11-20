@@ -595,6 +595,7 @@ class ReminderTests(PluginTestCase):
         args = plugin.toast.call_args
         self.assertEqual(args.args[0], "待办提醒")
         self.assertEqual(args.args[1], "到期")
+        self.assertEqual(args.kwargs.get("click"), [{"type": "hide"}])
 
     def test_reminded_flag_is_persisted(self):
         self.due_todo()
@@ -615,6 +616,7 @@ class ReminderTests(PluginTestCase):
         self.assertEqual(title, "待办提醒（3 条）")
         for text in ("一", "二", "三"):
             self.assertIn(text, body)
+        self.assertEqual(plugin.toast.call_args.kwargs.get("click"), [{"type": "hide"}])
         self.assertEqual(sorted(fired), sorted(ids))
         self.assertTrue(all(todo["reminded"] for todo in self.app.list()))
 
@@ -755,6 +757,16 @@ class SettingsTests(PluginTestCase):
         hide.assert_called_once()
         show.assert_not_called()
 
+    def test_settings_on_does_not_override_persisted_hidden(self):
+        self.app.config["sticky_visible"] = False
+        with mock.patch("main.sticky_window.apply_settings"), \
+                mock.patch.object(self.app, "show_sticky") as show, \
+                mock.patch.object(self.app, "hide_sticky"), \
+                mock.patch("main.register_hotkey"):
+            main.on_settings({"show_sticky": True}, None)
+
+        show.assert_not_called()
+
     def test_initialization_loads_data_and_shows_the_note(self):
         plugin = mock.Mock()
         plugin.data_dir = str(self.dir)
@@ -767,6 +779,58 @@ class SettingsTests(PluginTestCase):
 
         show.assert_called_once()
         reminders.assert_called_once()
+
+    def _init_with(self, settings):
+        plugin = mock.Mock()
+        plugin.data_dir = str(self.dir)
+        plugin.settings = dict(settings)
+        with mock.patch("main.sticky_window.show") as show, \
+                mock.patch("main.start_reminders"), \
+                mock.patch("main.threading.Thread"):
+            main.on_initialized(plugin)
+        return show
+
+    def test_initialization_respects_persisted_hidden_note(self):
+        self.app.set_sticky_visible(False)
+
+        show = self._init_with({"show_sticky": True})
+
+        show.assert_not_called()
+
+    def test_initialization_respects_persisted_visible_note(self):
+        self.app.set_sticky_visible(True)
+
+        show = self._init_with({"show_sticky": True})
+
+        show.assert_called_once()
+
+    def test_initialization_show_sticky_false_never_shows(self):
+        self.app.set_sticky_visible(True)
+
+        show = self._init_with({"show_sticky": False})
+
+        show.assert_not_called()
+
+    def test_initialization_missing_sticky_visible_defaults_true(self):
+        store.save_config(self.dir, self.app.config)
+        path = os.path.join(self.dir, "config.json")
+        with open(path, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        raw.pop("sticky_visible", None)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(raw, handle)
+
+        show = self._init_with({"show_sticky": True})
+
+        show.assert_called_once()
+
+    def test_x_close_persists_hidden_state(self):
+        self.app.set_sticky_visible(True)
+        self.app.set_sticky_visible(False)
+
+        show = self._init_with({"show_sticky": True})
+
+        show.assert_not_called()
 
 
 class TodoAppTests(PluginTestCase):
@@ -1024,7 +1088,7 @@ class ManifestTests(unittest.TestCase):
     def test_identity(self):
         self.assertEqual(self.manifest["id"], "me.todo")
         self.assertEqual(self.manifest["id"], os.path.basename(HERE))
-        self.assertEqual(self.manifest["version"], "3.6.1")
+        self.assertEqual(self.manifest["version"], "3.6.2")
         self.assertEqual(self.manifest["author"], "888bik")
         self.assertEqual(self.manifest["license"], "MIT")
         self.assertEqual(self.manifest["icon"], "icon.png")
@@ -1421,3 +1485,5 @@ class LockMenuTests(PluginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
     "window_x": None, "window_y": None,
     "window_width": None, "window_height": None,
     "font_size": 10, "view": "list", "locked": False, "filter": "all", "compact": False,
-    "transparency": None,
+    "transparency": None, "sticky_visible": True,
 }
 FONT_MIN, FONT_MAX, FONT_DEFAULT = 9, 14, 10
 VIEWS = ("list", "today", "week", "month")
@@ -140,6 +140,7 @@ def load_config(data_dir):
         config["locked"] = bool(raw.get("locked", False))
         config["filter"] = normalize_filter(raw.get("filter"))
         config["compact"] = bool(raw.get("compact", False))
+        config["sticky_visible"] = bool(raw.get("sticky_visible", True))
         transparency = raw.get("transparency")
         if isinstance(transparency, int) and not isinstance(transparency, bool) and 50 <= transparency <= 100:
             config["transparency"] = transparency
@@ -161,6 +162,7 @@ def save_config(data_dir, config):
     payload["locked"] = bool(config.get("locked", False))
     payload["filter"] = normalize_filter(config.get("filter"))
     payload["compact"] = bool(config.get("compact", False))
+    payload["sticky_visible"] = bool(config.get("sticky_visible", True))
     transparency = config.get("transparency")
     if isinstance(transparency, int) and not isinstance(transparency, bool) and 50 <= transparency <= 100:
         payload["transparency"] = transparency

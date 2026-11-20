@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.6.2
+- Sticky window visibility now persists in `config.json` as `sticky_visible` (default true for old/new configs). Startup shows the note only when `show_sticky` is true and the persisted state is visible; X/hide records false, show records true. Tray/hotkey manual show/hide still works, and `apply_settings` no longer forces the note open when the setting is re-enabled.
+- Reminder toast click now uses `winshun.hide()` instead of `winshun.set_query("db ")`: clicking only dismisses the toast, no search jump. Reminder scheduling, merged batch toast, title/body and sound are unchanged.
+- Version 3.6.2; no data format, permissions, defaults, UI style or other behavior changes.
+- Bench (Windows, 7-round medians): 2000 refresh/search 0.016/0.027, 10000 0.049/0.102; 3.6.1 baseline 2000 0.016/0.030, 10000 0.056/0.104. No item degraded more than 15%.
+
 ## 3.6.1
 - Icon round 4 final fix: Tk's `iconbitmap` accepted the ICO but left Windows' generic page icon (the small frames are PNG-compressed). `_set_native_icon()` now calls `LoadImageW` + `WM_SETICON` for both 16px and 32px slots after Tk's calls. Real title bar now shows the blue check; verified with a screenshot crop.
 

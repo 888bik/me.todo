@@ -481,10 +481,22 @@ class App:
             focus = False
         sticky_window.show(self, self.settings, focus)
         self.visible = True
+        self.set_sticky_visible(True)
 
     def hide_sticky(self):
         sticky_window.hide()
         self.visible = False
+        self.set_sticky_visible(False)
+
+    def set_sticky_visible(self, visible):
+        """Persist the window's last user-visible state across restarts."""
+        visible = bool(visible)
+        with self.lock:
+            if self.config.get("sticky_visible", True) == visible:
+                return
+            self.config["sticky_visible"] = visible
+            if self.data_dir:
+                store.save_config(self.data_dir, self.config)
 
     def toggle_sticky(self):
         # The window thread owns the real visibility (the X button hides from
@@ -498,7 +510,7 @@ class App:
         self.settings = dict(settings or {})
         sticky_window.apply_settings(self.settings)
         if self.settings.get("show_sticky", True):
-            if not self.visible:
+            if not self.visible and self.config.get("sticky_visible", True):
                 self.show_sticky()
         else:
             self.hide_sticky()
@@ -577,7 +589,7 @@ def fire_reminders(app_instance, plugin, now=None):
     if len(body) > 200:
         body = body[:200]
     title = "待办提醒" if len(due) == 1 else "待办提醒（%d 条）" % len(due)
-    plugin.toast(title, body, click=[winshun.set_query("db ")])
+    plugin.toast(title, body, click=[winshun.hide()])
     if app_instance.settings.get("reminder_sound", True):
         _play_reminder_sound()
 
@@ -903,7 +915,7 @@ def on_initialized(plugin):
     if theme not in ("light", "dark"):
         theme = "light"
     sticky_window.apply_appearance(appearance, theme)
-    if app.settings.get("show_sticky", True):
+    if app.settings.get("show_sticky", True) and app.config.get("sticky_visible", True):
         app.show_sticky()
     threading.Thread(target=register_hotkey, args=(app, plugin), daemon=True).start()
     start_reminders(app, plugin)

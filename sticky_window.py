@@ -951,6 +951,10 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         self.root.withdraw()
         self.status.configure(text="")
         _state["visible"] = False
+        try:
+            self.controller.set_sticky_visible(False)
+        except Exception:
+            pass
 
     def _on_configure(self, event):
         if event.widget is not self.root:
