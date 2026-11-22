@@ -144,6 +144,22 @@ class App:
             self._list_cache_version = -1
         return [dict(todo) for todo in self.todos]
 
+    def import_todos(self, path):
+        """Import todos atomically with respect to the reminder thread.
+
+        The whole read-merge-write-reload cycle runs under ``self.lock`` so a
+        reminder save cannot interleave a stale in-memory snapshot and wipe
+        the imported rows.  Returns (added, skipped).
+        """
+        with self.lock:
+            added, skipped = store.import_todos(self.data_dir, path)
+            # Refresh memory while still holding the lock: dropping it first
+            # would let a reminder save the old snapshot over the import.
+            self.todos = store.load_todos(self.data_dir)
+            self._todos_version += 1
+            self._list_cache_version = -1
+        return added, skipped
+
     def _save_todos_locked(self):
         store.save_todos(self.data_dir, self.todos)
         self._todos_version += 1

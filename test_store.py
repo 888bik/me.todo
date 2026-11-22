@@ -1,5 +1,8 @@
+import gc
 import json
+import os
 import shutil
+import threading
 import unittest
 from datetime import date, datetime, timedelta
 
@@ -763,6 +766,58 @@ class ExportImportTests(unittest.TestCase):
             store.import_todos(self.dir, str(self.dir / "bad.json"))
 
         self.assertEqual([todo["text"] for todo in store.load_todos(self.dir)], ["保留我"])
+
+
+class AtomicWriteConcurrencyTests(unittest.TestCase):
+    """Regression: unique temp names must survive concurrent save_todos."""
+
+    def test_concurrent_saves_never_corrupt_or_raise(self):
+        data_dir = make_data_dir()
+        self.addCleanup(shutil.rmtree, data_dir, True)
+        payloads = [
+            [store.new_todo("writer-%d-%d" % (worker, i)) for i in range(40)]
+            for worker in range(3)
+        ]
+
+        errors = []
+
+        def writer(todos):
+            for _ in range(80):
+                try:
+                    store.save_todos(data_dir, todos)
+                except FileNotFoundError as exc:
+                    # The old fixed temp name let one writer rename it away
+                    # and made a second os.replace fail with FileNotFoundError.
+                    errors.append(exc)
+                except PermissionError:
+                    # Concurrent os.replace to the same destination can fail
+                    # on Windows; real writers are serialized by App.lock.
+                    pass
+
+        threads = [threading.Thread(target=writer, args=(p,)) for p in payloads]
+        # Worker threads allocate heavily; keep GC off there so it cannot
+        # finalize Tk objects left by earlier tests on the wrong thread.
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        finally:
+            if gc_was_enabled:
+                gc.enable()
+            gc.collect()
+
+        self.assertEqual(errors, [], "save_todos raised: %r" % (errors[:3],))
+        # The final file must always be a complete, parseable JSON array.
+        with open(data_dir / "todos.json", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        self.assertIsInstance(loaded, list)
+        self.assertTrue(loaded)
+        # Every writer must have cleaned up its own unique temp file.
+        leftovers = [name for name in os.listdir(data_dir) if name.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":

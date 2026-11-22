@@ -1,10 +1,12 @@
 import json
 import ctypes
+import gc
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import unittest
 from datetime import date, datetime, timedelta
 from unittest import mock
@@ -573,6 +575,48 @@ class ImportReloadTests(PluginTestCase):
 
         self.assertEqual((added, skipped), (1, 1))
         self.assertEqual(len(store.load_todos(self.dir)), 2)
+
+    def test_import_under_lock_survives_reminder_thread(self):
+        """Regression: the reminder thread must not wipe a concurrent import."""
+        for i in range(20):
+            self.app.add("原有 %d" % i)
+        path = self.write_import([
+            {"id": "imported-%d" % i, "text": "导入 %d" % i} for i in range(20)
+        ])
+
+        errors = []
+        stop = threading.Event()
+
+        def reminder():
+            while not stop.is_set():
+                try:
+                    with self.app.lock:
+                        self.app._save_todos_locked()
+                except Exception as exc:
+                    errors.append(exc)
+
+        thread = threading.Thread(target=reminder, daemon=True)
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            thread.start()
+            for attempt in range(30):
+                added, skipped = self.app.import_todos(path)
+                # First call adds the 20 rows; later calls skip them as dups.
+                self.assertEqual((added, skipped), (20, 0) if attempt == 0 else (0, 20))
+        finally:
+            stop.set()
+            thread.join()
+            if gc_was_enabled:
+                gc.enable()
+            gc.collect()
+
+        self.assertEqual(errors, [], "reminder save raised: %r" % (errors[:3],))
+        disk_texts = {todo["text"] for todo in store.load_todos(self.dir)}
+        memory_texts = {todo["text"] for todo in self.app.list()}
+        self.assertTrue({"导入 %d" % i for i in range(20)} <= disk_texts)
+        self.assertTrue({"导入 %d" % i for i in range(20)} <= memory_texts)
+        self.assertEqual(disk_texts, memory_texts)
 
 
 class ReminderTests(PluginTestCase):

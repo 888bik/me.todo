@@ -197,15 +197,21 @@ class ActionsMixin:
         if not path:
             return
         try:
-            added, skipped = store.import_todos(self.controller.data_dir, path)
+            # Prefer the controller's locked import: it keeps the reminder
+            # thread from writing a stale snapshot between merge and reload.
+            import_todos = getattr(self.controller, "import_todos", None)
+            if import_todos is not None:
+                added, skipped = import_todos(path)
+            else:
+                added, skipped = store.import_todos(self.controller.data_dir, path)
+                reload_todos = getattr(self.controller, "reload_todos", None)
+                if reload_todos is not None:
+                    reload_todos()
+                elif hasattr(self.controller, "todos"):
+                    self.controller.todos = store.load_todos(self.controller.data_dir)
         except Exception as exc:
             self.status.configure(text="导入失败：%s" % exc)
             return
-        reload_todos = getattr(self.controller, "reload_todos", None)
-        if reload_todos is not None:
-            reload_todos()
-        elif hasattr(self.controller, "todos"):
-            self.controller.todos = store.load_todos(self.controller.data_dir)
         self.status.configure(text="导入 %d 条，跳过 %d 条重复" % (added, skipped))
         self._render()
 

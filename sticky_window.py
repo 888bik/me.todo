@@ -705,22 +705,38 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         except queue.Empty:
             pass
         pending_refresh = None
-        for command in commands:
-            if command[0] == "refresh":
-                pending_refresh = command
-                continue
-            if pending_refresh is not None:
-                self._dispatch(pending_refresh)
-                pending_refresh = None
-            self._dispatch(command)
-        if pending_refresh is not None:
-            self._dispatch(pending_refresh)
         try:
-            hidden = str(self.root.state()) in ("withdrawn", "iconic")
-        except Exception:
-            hidden = False
-        self._check_lock_hook(hidden=hidden)
-        self._schedule_pump()
+            for command in commands:
+                if command[0] == "refresh":
+                    pending_refresh = command
+                    continue
+                if pending_refresh is not None:
+                    try:
+                        self._dispatch(pending_refresh)
+                    except Exception as exc:
+                        _log("sticky command %r failed: %r" % (pending_refresh[0], exc))
+                    pending_refresh = None
+                try:
+                    self._dispatch(command)
+                except Exception as exc:
+                    _log("sticky command %r failed: %r" % (command[0], exc))
+            if pending_refresh is not None:
+                try:
+                    self._dispatch(pending_refresh)
+                except Exception as exc:
+                    _log("sticky command %r failed: %r" % (pending_refresh[0], exc))
+            try:
+                hidden = str(self.root.state()) in ("withdrawn", "iconic")
+            except Exception:
+                hidden = False
+            try:
+                self._check_lock_hook(hidden=hidden)
+            except Exception as exc:
+                _log("lock hook watchdog failed: %r" % (exc,))
+        finally:
+            # Never let one bad command break the 1s polling chain: without
+            # this the window silently stops responding while still alive.
+            self._schedule_pump()
 
     def _schedule_pump(self):
         if getattr(self, "_pump_after_id", None) is not None:
@@ -775,7 +791,10 @@ class _StickyWindow(DetailsMixin, NavMixin, ListMixin, CalendarMixin, LockMixin,
         elif name == "settings":
             self.settings = dict(command[1])
             if not isinstance(self.config.get("transparency"), int):
-                self.transparency = max(50, min(100, int(self.settings.get("transparency", 95))))
+                # _alpha_value tolerates null/empty/non-numeric values and
+                # falls back to 95; keep self.transparency in the 50-100 range
+                # used everywhere else (it returns a 0.5-1.0 alpha).
+                self.transparency = round(_alpha_value(self.settings.get("transparency", 95)) * 100)
             self._apply_alpha()
         elif name == "appearance":
             self._apply_appearance(command[1], command[2])

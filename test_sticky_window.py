@@ -276,6 +276,45 @@ class HookWatchdogTests(unittest.TestCase):
         is_active.assert_not_called()
 
 
+class PumpResilienceTests(unittest.TestCase):
+    """Regression: one bad command must never break the 1s pump chain."""
+
+    def make_window(self):
+        window = object.__new__(sticky_window._StickyWindow)
+        window.commands = queue.Queue()
+        window.root = mock.MagicMock()
+        window.root.state.return_value = "normal"
+        window.locked = False
+        window.settings = {}
+        window.config = {}
+        window.transparency = 95
+        window._apply_alpha = mock.MagicMock()
+        window._check_lock_hook = mock.MagicMock()
+        window._pump_after_id = None
+        window.root.after.return_value = 42
+        return window
+
+    def test_bad_dispatch_does_not_stop_pump(self):
+        window = self.make_window()
+        window.commands.put(("boom",))
+        window._dispatch = mock.MagicMock(side_effect=RuntimeError("render blew up"))
+
+        window.pump()
+
+        self.assertIsNotNone(window._pump_after_id)
+        window.root.after.assert_called_with(1000, window.pump)
+
+    def test_null_transparency_settings_command_does_not_stop_pump(self):
+        window = self.make_window()
+        window.commands.put(("settings", {"transparency": None}))
+
+        window.pump()
+
+        self.assertEqual(window.transparency, 95)
+        self.assertIsNotNone(window._pump_after_id)
+        window.root.after.assert_called_with(1000, window.pump)
+
+
 class AppearancePaletteTests(unittest.TestCase):
     def setUp(self):
         self.appearance = dict(sticky_window._current_appearance)

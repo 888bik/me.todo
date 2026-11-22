@@ -110,11 +110,20 @@ def _atomic_write(path, payload):
     folder = os.path.dirname(path)
     if folder:
         os.makedirs(folder, exist_ok=True)
-    temporary = path + ".tmp"
-    with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-    os.replace(temporary, path)
+    # A per-write unique temp name keeps concurrent writers from truncating
+    # each other's in-flight JSON (and from racing on os.replace).
+    temporary = "%s.%s.tmp" % (path, uuid.uuid4().hex)
+    try:
+        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(temporary, path)
+    finally:
+        # Only remove our own temp file; a successful replace already moved it.
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
 
 
 # ---- config.json ---------------------------------------------------------------
